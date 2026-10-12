@@ -1,0 +1,30 @@
+{
+  "target": "real_docker_with_old_source_api_and_database_stopped",
+  "passed": true,
+  "results": [
+    {
+      "role": "student",
+      "login": "passed",
+      "login_ms": 466,
+      "courses": 3,
+      "tasks": 94,
+      "workspace": "passed",
+      "teacher_role_denied": true,
+      "confirmed_do_prepared": 9,
+      "preserved_pdf_download": true,
+      "logout_ms": 25,
+      "logout_cookie_replay_denied": true
+    },
+    {
+      "role": "instructor",
+      "login": "passed",
+      "login_ms": 153,
+      "courses": 3,
+      "tasks": 94,
+      "workspace": "passed",
+      "authoring_reads_and_overview": "passed",
+      "logout_ms": 25,
+      "logout_cookie_replay_denied": true
+    }
+  ]
+}

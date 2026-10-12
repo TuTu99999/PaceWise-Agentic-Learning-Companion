@@ -1,0 +1,9 @@
+node_modules
+dist
+.vite
+*.tsbuildinfo
+npm-debug.log*
+.env
+.git
+.gitignore
+README.md

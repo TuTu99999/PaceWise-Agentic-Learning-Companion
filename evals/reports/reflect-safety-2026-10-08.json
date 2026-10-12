@@ -1,0 +1,518 @@
+{
+  "sample_count": 20,
+  "pass_count": 20,
+  "overall_pass": true,
+  "cases": [
+    {
+      "id": "R1_fabricated_evidence",
+      "input": {
+        "reflection_scope": "activity",
+        "planned_minutes": 60,
+        "actual_minutes": 100
+      },
+      "model_claim": 999,
+      "output": {
+        "scope": "activity",
+        "activity": {},
+        "effective": "",
+        "difficulty": "",
+        "next_step": "",
+        "evidence": {
+          "reflection_scope": "activity",
+          "planned_minutes": 60,
+          "actual_minutes": 100
+        },
+        "week_start": null,
+        "planning_signal": {
+          "cause": "none",
+          "duration_factor": 1,
+          "follow_up_minutes": 0,
+          "affected_kcs": [],
+          "task_id": ""
+        },
+        "validation_warnings": [
+          "MODEL_EVIDENCE_CONFLICT"
+        ]
+      },
+      "pass": true
+    },
+    {
+      "id": "R2_earlier_missed_last_completed",
+      "input": {
+        "week_start": "2026-10-05",
+        "sessions": [
+          {
+            "block_id": "first",
+            "status": "missed",
+            "planned_minutes": 60,
+            "actual_minutes": 0
+          },
+          {
+            "block_id": "last",
+            "status": "completed",
+            "planned_minutes": 60,
+            "actual_minutes": 60,
+            "completion_percent": 100
+          }
+        ]
+      },
+      "output": {
+        "policy_version": "replan-policy-v1",
+        "action": "propose_draft",
+        "reasons": [
+          "actual_time_deviation",
+          "missed_block"
+        ],
+        "evidence_note": null,
+        "requires_confirmation": true,
+        "auto_apply": false,
+        "fingerprint": "3fb918c6e39169a2abf84615593d4cba268980b7c734a44440bcfbbf9ee346fa",
+        "decided_at": "2026-10-12T10:49:01.280460+00:00",
+        "mutable_scope": "future_uncompleted_student_blocks",
+        "scope": "weekly",
+        "week_start": "2026-10-05",
+        "observed_session_count": 2,
+        "trigger_source_refs": []
+      },
+      "pass": true
+    },
+    {
+      "id": "weekly_duplicate_guard",
+      "output": {
+        "policy_version": "replan-policy-v1",
+        "action": "keep",
+        "reasons": [
+          "duplicate_signal"
+        ],
+        "evidence_note": null,
+        "requires_confirmation": false,
+        "auto_apply": false,
+        "fingerprint": "3fb918c6e39169a2abf84615593d4cba268980b7c734a44440bcfbbf9ee346fa",
+        "decided_at": "2026-10-12T10:49:01.280460+00:00",
+        "mutable_scope": "future_uncompleted_student_blocks",
+        "scope": "weekly",
+        "week_start": "2026-10-05",
+        "observed_session_count": 2,
+        "trigger_source_refs": []
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_capacity_changed",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:8b282629d6175d43"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "capacity_changed",
+        "durationFactor": 1.0,
+        "followUpMinutes": 0,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_deadline_changed",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:06250193f26e012e"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "deadline_changed",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_estimate_error",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:1b20337f4dc872f3"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "estimate_error",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_fatigue",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:cbf8e9709a2d7f46"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "fatigue",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_insufficient_time",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:d09d7bd3ce07343a"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "insufficient_time",
+        "durationFactor": 1.0,
+        "followUpMinutes": 0,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_interruption",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:2db8663a4aef6597"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "interruption",
+        "durationFactor": 1.0,
+        "followUpMinutes": 0,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_knowledge_gap",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:7b23f374332787c2"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "knowledge_gap",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_misconception",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:de37834db0d82ec9"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "misconception",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_missed_block",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:aa7a24c6fa8cbd9a"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "missed_block",
+        "durationFactor": 1.0,
+        "followUpMinutes": 0,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_missing_prerequisite",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:8d808960316cac7c"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "missing_prerequisite",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_none",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:0213f75face38a3b"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "none",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_schedule_conflict",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:5ff2a73dfda8cc93"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "schedule_conflict",
+        "durationFactor": 1.0,
+        "followUpMinutes": 0,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_task_harder_than_expected",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:8a0d55d3c8be5361"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "task_harder_than_expected",
+        "durationFactor": 1.0,
+        "followUpMinutes": 30,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R3_round_trip_unknown",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:437c8217f7b42c6f"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "unknown",
+        "durationFactor": 1.0,
+        "followUpMinutes": 0,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": null,
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "unknown_nonfinite_signal",
+      "output": {
+        "personalFactor": 1.0,
+        "evidenceCount": 0,
+        "sourceRefs": [],
+        "signalSourceRefs": [
+          "reflect-signal:9dc104f3072fbd8b"
+        ],
+        "blockers": {},
+        "lastAdjustment": "",
+        "activityReflectionCount": 0,
+        "cause": "unknown",
+        "durationFactor": 1.0,
+        "followUpMinutes": 0,
+        "affectedKnowledgeComponents": [],
+        "unrecognizedCause": "invented",
+        "signalCount": 1
+      },
+      "pass": true
+    },
+    {
+      "id": "R4_prompt_injection_blocked_before_reflect_model",
+      "output": {
+        "workflow": "qa",
+        "current_node": "coordinator",
+        "analysis": "Guardrail chặn prompt injection trước khi gọi mô hình.",
+        "security_flags": {
+          "is_injection_attempt": true,
+          "is_homework_cheat_attempt": false,
+          "action": "block",
+          "reason": "prompt_injection",
+          "rule_version": "guardrails_v1",
+          "layers": [
+            "rules"
+          ]
+        },
+        "status": "failed",
+        "output": {},
+        "quality_review": {},
+        "quality_repair_count": 0
+      },
+      "pass": true
+    },
+    {
+      "id": "R5_reflect_to_replan_draft_handoff",
+      "input": {
+        "signal": {
+          "cause": "task_harder_than_expected",
+          "duration_factor": 1.0,
+          "follow_up_minutes": 30,
+          "affected_kcs": [],
+          "task_id": "synthetic:reflection-task"
+        },
+        "last_do": {
+          "block_id": "observed-session",
+          "task_id": "synthetic:reflection-task",
+          "status": "needs_more_time",
+          "planned_minutes": 60,
+          "actual_minutes": 105,
+          "completion_percent": 70
+        }
+      },
+      "output": {
+        "decision": {
+          "policy_version": "replan-policy-v1",
+          "action": "propose_draft",
+          "reasons": [
+            "actual_time_deviation",
+            "unfinished_work"
+          ],
+          "evidence_note": null,
+          "requires_confirmation": true,
+          "auto_apply": false,
+          "fingerprint": "d0399b53896c8459cc1a157ec38ea8e929f6918ed1c82b24e294af10cdea349b",
+          "decided_at": "2026-10-12T12:00:00+07:00",
+          "mutable_scope": "future_uncompleted_student_blocks",
+          "repair_context": {
+            "affected_task_ids": [
+              "synthetic:reflection-task"
+            ],
+            "cause": "task_harder_than_expected",
+            "observed_remaining_minutes": 0,
+            "signal_follow_up_minutes": 30
+          }
+        },
+        "planning_target": {
+          "taskId": "synthetic:reflection-task",
+          "targetMin": 150,
+          "remainingMin": 120,
+          "reflectFollowUpMin": 30,
+          "adaptiveReviewMin": 30,
+          "estimateStatus": "insufficient_evidence"
+        },
+        "block_ids": [
+          "elapsed-agent-block",
+          "blk-fba8a4cfc093",
+          "blk-7cefa6de90f7",
+          "blk-e4458071e867",
+          "student-pin"
+        ],
+        "checks": {
+          "policy_proposes_draft": true,
+          "never_auto_applies": true,
+          "reflection_follow_up_reaches_plan": true,
+          "total_work_not_reduced": true,
+          "student_pin_preserved": true,
+          "future_agent_block_released": true,
+          "elapsed_agent_block_is_history": true,
+          "draft_is_feasible": true,
+          "quality_has_no_blocking_error": true
+        }
+      },
+      "pass": true
+    }
+  ],
+  "live_model": {
+    "model_status": "not_run"
+  },
+  "limitations": [
+    "Synthetic fixtures establish technical invariants, not educational efficacy.",
+    "Immutable evidence does not guarantee every unrestricted narrative sentence is true.",
+    "Unrecorded historical sessions cannot be reconstructed from truncated legacy memory."
+  ]
+}

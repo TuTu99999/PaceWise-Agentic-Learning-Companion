@@ -1,0 +1,7 @@
+# Optional local LMS web. Merge AFTER docker-compose.yml.
+services:
+  lms-simulator:
+    environment:
+      LMS_WEB_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8010:8010"

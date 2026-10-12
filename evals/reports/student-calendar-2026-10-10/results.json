@@ -1,0 +1,79 @@
+{
+  "mode": "offline browser fixtures",
+  "results": [
+    {
+      "width": 390,
+      "height": 844,
+      "case": "today and useful hour",
+      "scrollTop": 760,
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "case": "reload restores draft, not applied plan",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "case": "deadline 12:00 rejects 17:00 session",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "case": "unrelated confirmed Do stays available",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "case": "hidden personal events still prevent overlap",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "case": "no duplicate add menu or personal priority; task panel accessible without overflow",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "today and useful hour",
+      "scrollTop": 1153,
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "reload restores draft, not applied plan",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "deadline 12:00 rejects 17:00 session",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "unrelated confirmed Do stays available",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "hidden personal events still prevent overlap",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "no duplicate add menu or personal priority; task panel accessible without overflow",
+      "passed": true
+    }
+  ]
+}

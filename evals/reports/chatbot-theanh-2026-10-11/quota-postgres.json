@@ -1,0 +1,18 @@
+{
+  "synthetic_requests": 1000,
+  "client_workers": 32,
+  "real_llm_calls": 0,
+  "active": 0,
+  "peak": 2,
+  "slots_released": true,
+  "nonnegative_counters": true,
+  "accepted": 24,
+  "capacity_rejected": 976,
+  "rate_rejected": 0,
+  "elapsed_seconds": 25.118,
+  "passed": true,
+  "limitations": [
+    "1000 synthetic quota calls with 32 workers; not 1000 simultaneous real student sessions or a full API load test."
+  ],
+  "temporary_schema_removed": true
+}

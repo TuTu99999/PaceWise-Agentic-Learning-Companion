@@ -1,0 +1,7 @@
+# Optional PaceWise navigation to the separately enabled LMS web.
+services:
+  frontend:
+    build:
+      args:
+        VITE_LMS_WEB_ENABLED: "true"
+        VITE_LMS_URL: ${VITE_LMS_URL:-http://localhost:8010}

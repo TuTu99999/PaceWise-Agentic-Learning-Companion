@@ -1,0 +1,17 @@
+-r requirements-lms.in
+
+# PaceWise backend runtime.
+langchain>=0.3.0
+langchain-openai>=0.3.0
+langgraph>=0.2.0
+langgraph-checkpoint-postgres>=2.0.0
+qdrant-client>=1.12.0
+fastembed>=0.8.0
+flashrank>=0.2.9,<0.3.0
+cryptography>=44.0.0
+pywebpush>=2.0.0,<3
+pypdf>=5.0.0
+PyMuPDF>=1.24.0,<2
+openpyxl>=3.1.5,<4
+boto3>=1.35.0,<2
+alembic>=1.14.0,<2

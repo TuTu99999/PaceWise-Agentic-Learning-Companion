@@ -1,0 +1,78 @@
+{
+  "sample_count": 6,
+  "evaluation_mode": "pilot",
+  "metrics": {
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.8164,
+    "llm_context_precision_with_reference": 1.0,
+    "context_recall": 1.0
+  },
+  "thresholds": {
+    "faithfulness": 0.8,
+    "answer_relevancy": 0.9,
+    "llm_context_precision_with_reference": 0.7,
+    "context_recall": 0.7
+  },
+  "scored_samples": {
+    "faithfulness": 6,
+    "answer_relevancy": 6,
+    "llm_context_precision_with_reference": 6,
+    "context_recall": 6
+  },
+  "per_sample": [
+    {
+      "sample": 1,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.5851,
+      "llm_context_precision_with_reference": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "sample": 2,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.7708,
+      "llm_context_precision_with_reference": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "sample": 3,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.8897,
+      "llm_context_precision_with_reference": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "sample": 4,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9545,
+      "llm_context_precision_with_reference": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "sample": 5,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9583,
+      "llm_context_precision_with_reference": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "sample": 6,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.7401,
+      "llm_context_precision_with_reference": 1.0,
+      "context_recall": 1.0
+    }
+  ],
+  "quality_passed": false,
+  "passed": false,
+  "usage": {
+    "input_tokens": 160664,
+    "output_tokens": 5900,
+    "estimated_cost_usd": null,
+    "pricing_configured": false,
+    "missing_usage": false
+  },
+  "limitations": [
+    "Pilot cannot establish release quality or 1000-user capacity."
+  ]
+}

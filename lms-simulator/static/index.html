@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Lightweight Canvas LMS development simulator" />
+    <title>Canvas</title>
+    <link rel="stylesheet" href="/static/styles.css?v=8" />
+  </head>
+  <body>
+    <section id="login-screen" class="ic-Login">
+      <div class="ic-Login__container">
+        <div class="ic-Login__content">
+          <div class="ic-Login__innerContent">
+            <div class="ic-Login-header">
+              <div class="canvas-wordmark" aria-label="Canvas">
+                <span class="canvas-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <strong>canvas</strong>
+              </div>
+            </div>
+            <div class="ic-Login__body">
+              <form id="login-form">
+                <h1 class="screenreader-only">Log In</h1>
+                <label class="ic-Label" for="email">Email</label>
+                <input id="email" class="ic-Input" type="email" autocomplete="username" required />
+                <label class="ic-Label" for="password">Password</label>
+                <input id="password" class="ic-Input" type="password" autocomplete="current-password" required />
+                <p id="login-error" class="form-error" role="alert"></p>
+                <div class="ic-Login__actions">
+                  <div>
+                    <label class="remember"><input type="checkbox" /> Stay signed in</label>
+                    <button class="link-button" id="forgot-password" type="button">Forgot Password?</button>
+                  </div>
+                  <button class="Button Button--login" type="submit">Log In</button>
+                </div>
+              </form>
+            </div>
+          </div>
+          <footer class="ic-Login-footer">
+            <span>Canvas LMS</span>
+            <span>Open Source LMS</span>
+          </footer>
+        </div>
+      </div>
+    </section>
+
+    <div id="app-shell" class="ic-app hidden">
+      <aside class="ic-app-header" aria-label="Global Navigation">
+        <button class="ic-app-header__logomark" data-nav="dashboard" aria-label="Home">
+          <span class="canvas-mark small" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        </button>
+        <nav class="ic-app-header__main-navigation">
+          <button data-nav="account"><span class="nav-avatar" id="nav-avatar">U</span><span>Account</span></button>
+          <button data-nav="dashboard" class="active"><span class="nav-symbol">▦</span><span>Dashboard</span></button>
+          <button data-nav="courses"><span class="nav-symbol">▤</span><span>Courses</span></button>
+          <button data-nav="calendar"><span class="nav-symbol">□</span><span>Calendar</span></button>
+          <button data-nav="inbox"><span class="nav-symbol">✉</span><span>Inbox</span></button>
+          <button data-nav="pacewise"><span class="nav-symbol" aria-hidden="true">P</span><span>PaceWise</span></button>
+          <button data-nav="history"><span class="nav-symbol">◷</span><span>History</span></button>
+        </nav>
+        <button class="help-nav" data-nav="help"><span class="nav-symbol">?</span><span>Help</span></button>
+      </aside>
+
+      <div id="navigation-tray" class="navigation-tray hidden" aria-live="polite"></div>
+
+      <div class="ic-Layout-wrapper">
+        <header class="mobile-header">
+          <button id="mobile-menu" aria-label="Open navigation">☰</button>
+          <span class="canvas-wordmark compact"><strong>canvas</strong></span>
+        </header>
+        <main id="main-content" class="ic-Layout-contentMain" tabindex="-1">
+          <div class="loading-state"><span class="spinner"></span><p>Loading...</p></div>
+        </main>
+      </div>
+    </div>
+
+    <div id="dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="dialog-card">
+        <header><h2 id="dialog-title"></h2><button id="dialog-close" aria-label="Close">×</button></header>
+        <div id="dialog-body"></div>
+      </div>
+    </div>
+
+    <div id="flash-message" class="flash-message hidden" role="status"></div>
+    <script src="/static/i18n.js?v=1" defer></script>
+    <script src="/static/app.js?v=12" defer></script>
+  </body>
+</html>

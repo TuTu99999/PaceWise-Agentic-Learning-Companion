@@ -1,0 +1,216 @@
+name: pacewise
+
+services:
+  pacewise-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pacewise
+      POSTGRES_USER: pacewise
+      POSTGRES_PASSWORD: ${PACEWISE_DB_PASSWORD:-pacewise-local-only}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pacewise_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pacewise -d pacewise"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://pacewise:${PACEWISE_DB_PASSWORD:-pacewise-local-only}@pacewise-postgres:5432/pacewise
+      COURSE_SOURCE_MODE: standalone
+    depends_on:
+      pacewise-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://pacewise:${PACEWISE_DB_PASSWORD:-pacewise-local-only}@pacewise-postgres:5432/pacewise
+      COURSE_SOURCE_MODE: standalone
+      COURSE_PDF_MAX_MB: ${COURSE_PDF_MAX_MB:-50}
+      COURSE_PDF_MAX_PAGES: ${COURSE_PDF_MAX_PAGES:-1000}
+      COURSE_FILE_MAX_CHUNKS: ${COURSE_FILE_MAX_CHUNKS:-2000}
+      COURSE_FILE_MAX_TEXT_CHARS: ${COURSE_FILE_MAX_TEXT_CHARS:-4000000}
+      COURSE_FILE_PROCESSING_SECONDS: ${COURSE_FILE_PROCESSING_SECONDS:-120}
+      COURSE_FILE_BATCH_SIZE: ${COURSE_FILE_BATCH_SIZE:-4}
+      COURSE_FILE_QUEUE_LIMIT: ${COURSE_FILE_QUEUE_LIMIT:-100}
+      COURSE_UPLOAD_DIR: /app/data/course-source/uploads
+      COURSE_MOCK_FILE_DIR: /app/data/course-source/mock-files
+      PACEWISE_API_KEY: ${PACEWISE_API_KEY:-development-only-service-key-change-me}
+      PACEWISE_SESSION_SECRET: ${PACEWISE_SESSION_SECRET:-development-only-session-secret-change-me}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      VECTOR_STORE_TYPE: qdrant
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDING_CACHE_DIR: /app/data/models/fastembed
+      RERANKER_CACHE_DIR: /app/data/models/flashrank
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      FORCE_HTTPS: ${FORCE_HTTPS:-false}
+      SEMANTIC_SAFETY_MODE: ${SEMANTIC_SAFETY_MODE:-all}
+      RAG_SCORE_THRESHOLD: ${RAG_SCORE_THRESHOLD:-0.72}
+      LANGGRAPH_STRICT_MSGPACK: "true"
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/api/v1/integrations/google-calendar/callback}
+      GOOGLE_OAUTH_SUCCESS_URL: ${GOOGLE_OAUTH_SUCCESS_URL:-http://localhost:5173/app#/settings}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      pacewise-postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "src.worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://pacewise:${PACEWISE_DB_PASSWORD:-pacewise-local-only}@pacewise-postgres:5432/pacewise
+      COURSE_SOURCE_MODE: standalone
+      COURSE_PDF_MAX_MB: ${COURSE_PDF_MAX_MB:-50}
+      COURSE_PDF_MAX_PAGES: ${COURSE_PDF_MAX_PAGES:-1000}
+      COURSE_FILE_MAX_CHUNKS: ${COURSE_FILE_MAX_CHUNKS:-2000}
+      COURSE_FILE_MAX_TEXT_CHARS: ${COURSE_FILE_MAX_TEXT_CHARS:-4000000}
+      COURSE_FILE_PROCESSING_SECONDS: ${COURSE_FILE_PROCESSING_SECONDS:-120}
+      COURSE_FILE_BATCH_SIZE: ${COURSE_FILE_BATCH_SIZE:-4}
+      COURSE_FILE_QUEUE_LIMIT: ${COURSE_FILE_QUEUE_LIMIT:-100}
+      COURSE_UPLOAD_DIR: /app/data/course-source/uploads
+      COURSE_MOCK_FILE_DIR: /app/data/course-source/mock-files
+      PACEWISE_API_KEY: ${PACEWISE_API_KEY:-development-only-service-key-change-me}
+      INSTITUTION_ID: ${INSTITUTION_ID:-university-x}
+      LMS_SYNC_INTERVAL_SECONDS: ${LMS_SYNC_INTERVAL_SECONDS:-5}
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDING_CACHE_DIR: /app/data/models/fastembed
+      RERANKER_CACHE_DIR: /app/data/models/flashrank
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      pacewise-postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_started
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  notification-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "src.notification_worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://pacewise:${PACEWISE_DB_PASSWORD:-pacewise-local-only}@pacewise-postgres:5432/pacewise
+      COURSE_SOURCE_MODE: standalone
+      PACEWISE_SESSION_SECRET: ${PACEWISE_SESSION_SECRET:-development-only-session-secret-change-me}
+      WEBPUSH_ENABLED: ${WEBPUSH_ENABLED:-true}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      pacewise-postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/pacewise/Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+        VITE_LMS_URL: ${VITE_LMS_URL:-http://localhost:8010}
+        VITE_LMS_WEB_ENABLED: "false"
+        VITE_COURSE_SOURCE_MODE: standalone
+        VITE_COURSE_PDF_MAX_MB: ${COURSE_PDF_MAX_MB:-50}
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["observability"]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/pacewise-alerts.yml:/etc/prometheus/pacewise-alerts.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: ["observability"]
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-pacewise-local-only}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  pacewise_postgres_data:
+  prometheus_data:
+  grafana_data:
+  qdrant_data:

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: PaceWise
+    orgId: 1
+    folder: PaceWise
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

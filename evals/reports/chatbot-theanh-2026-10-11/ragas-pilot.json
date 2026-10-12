@@ -1,0 +1,28 @@
+{
+  "sample_count": 6,
+  "evaluation_mode": "pilot",
+  "metrics": {
+    "faithfulness": 0.919,
+    "answer_relevancy": 0.6385,
+    "llm_context_precision_with_reference": 1.0,
+    "context_recall": 1.0
+  },
+  "scored_samples": {
+    "faithfulness": 6,
+    "answer_relevancy": 6,
+    "llm_context_precision_with_reference": 6,
+    "context_recall": 6
+  },
+  "quality_passed": false,
+  "passed": false,
+  "usage": {
+    "input_tokens": 155295,
+    "output_tokens": 11543,
+    "estimated_cost_usd": null,
+    "pricing_configured": false,
+    "missing_usage": false
+  },
+  "limitations": [
+    "Pilot cannot establish release quality or 1000-user capacity."
+  ]
+}

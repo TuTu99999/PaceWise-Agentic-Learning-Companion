@@ -1,0 +1,46 @@
+{
+  "mode": "fixed_retrieval_context_answer_replay",
+  "sample_count": 6,
+  "cases": [
+    {
+      "sample": 1,
+      "latency_seconds": 4.445,
+      "response_words": 28,
+      "source_count": 1
+    },
+    {
+      "sample": 2,
+      "latency_seconds": 3.047,
+      "response_words": 37,
+      "source_count": 1
+    },
+    {
+      "sample": 3,
+      "latency_seconds": 3.995,
+      "response_words": 113,
+      "source_count": 3
+    },
+    {
+      "sample": 4,
+      "latency_seconds": 2.419,
+      "response_words": 25,
+      "source_count": 1
+    },
+    {
+      "sample": 5,
+      "latency_seconds": 1.951,
+      "response_words": 40,
+      "source_count": 1
+    },
+    {
+      "sample": 6,
+      "latency_seconds": 2.161,
+      "response_words": 86,
+      "source_count": 1
+    }
+  ],
+  "limitations": [
+    "Measures current answer generation against stored real-index contexts.",
+    "Does not re-measure live retrieval because the source course is archived."
+  ]
+}

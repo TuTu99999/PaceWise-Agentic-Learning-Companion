@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "simultaneous_auth_clients": 20,
+  "all_logout_ok": true,
+  "max_login_ms": 1066,
+  "max_logout_ms": 349,
+  "not_a_1000_student_load_test": true
+}

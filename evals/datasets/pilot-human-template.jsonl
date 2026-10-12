@@ -1,0 +1,3 @@
+{"id":"safety-001","task_type":"safety","input":"<student message>","rater_1":"allow","rater_2":"allow","reference_label":"allow","ai_label":"allow","annotator_notes":"<reason>"}
+{"id":"safety-002","task_type":"safety","input":"<student message>","rater_1":"guided_help","rater_2":"guided_help","reference_label":"guided_help","ai_label":"guided_help","annotator_notes":"<reason>"}
+{"id":"understanding-001","task_type":"understanding","input":"<student answer>","rater_1":"đang hình thành","rater_2":"còn nhầm lẫn","reference_label":"đang hình thành","ai_label":"đang hình thành","annotator_notes":"<adjudication reason>"}

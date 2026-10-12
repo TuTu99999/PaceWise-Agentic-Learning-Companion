@@ -1,0 +1,36 @@
+{
+  "project": "pacewise-private-metadata",
+  "synthetic_connectivity_only": true,
+  "services": [
+    {
+      "service": "backend",
+      "enabled": true,
+      "key_present": true,
+      "root_run_id": "4a164010-4e92-48cc-b9e6-f0a49224267f",
+      "status": "passed",
+      "cloud_spans_read": 5,
+      "span_names": ["coordinator", "plan", "do", "assessment", "reflect"],
+      "empty_inputs_and_metadata_only_outputs": true,
+      "parent_child_relationships": true,
+      "expected_project": true,
+      "all_spans_completed": true
+    },
+    {
+      "service": "worker",
+      "enabled": true,
+      "key_present": true,
+      "root_run_id": "4bca7e5c-4cf6-406f-ba8d-275bd88cb08d",
+      "status": "passed",
+      "cloud_spans_read": 5,
+      "span_names": ["coordinator", "plan", "do", "assessment", "reflect"],
+      "empty_inputs_and_metadata_only_outputs": true,
+      "parent_child_relationships": true,
+      "expected_project": true,
+      "all_spans_completed": true
+    }
+  ],
+  "backend_regression": {"passed": 569},
+  "targeted_regression": {"passed": 23},
+  "backend_health": "healthy",
+  "prometheus_target": {"job": "pacewise-backend", "health": "up", "lastError": ""}
+}

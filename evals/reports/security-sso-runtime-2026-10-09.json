@@ -1,0 +1,10 @@
+{
+  "environment": "local Docker / PostgreSQL / HTTP",
+  "checked_at_date": "2026-10-09",
+  "roles": [
+    {"role": "student", "login": 200, "bridge": 303, "code_replay": 401, "return_to_pacewise": 200, "logout": 200, "old_session_replay": 401, "linked_lms_after_logout": 401, "identity_in_url": false},
+    {"role": "instructor", "login": 200, "bridge": 303, "code_replay": 401, "return_to_pacewise": 200, "logout": 200, "old_session_replay": 401, "linked_lms_after_logout": 401, "identity_in_url": false}
+  ],
+  "observability": {"prometheus_target": "up", "prometheus_last_error": "", "promtool_config": "success", "alert_rules": 3, "grafana_health_http": 200},
+  "not_validated": ["real browser visual walkthrough", "LangSmith cloud delivery", "1000 simultaneous real learners / real model provider", "educational outcome or causal KPI improvement"]
+}

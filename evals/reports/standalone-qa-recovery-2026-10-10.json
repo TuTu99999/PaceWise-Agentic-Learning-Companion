@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "recovered_tables": 12,
+  "recovered_baseline_checksums": true,
+  "unrelated_tables_unchanged": true,
+  "private_recovery_snapshot_preserved": true
+}

@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "results": [
+    {
+      "role": "student",
+      "login_navigation_logout": "passed",
+      "legacy_requests": 0,
+      "page_errors": 0
+    },
+    {
+      "role": "teacher",
+      "login_navigation_logout": "passed",
+      "legacy_requests": 0,
+      "page_errors": 0
+    }
+  ]
+}

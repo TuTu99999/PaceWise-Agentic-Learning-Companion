@@ -1,0 +1,59 @@
+{
+  "mode": "offline fixtures; backend rules separately tested",
+  "results": [
+    {
+      "width": 390,
+      "height": 844,
+      "case": "existing confirmed plan remains usable during invalid draft",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "case": "invalid block disabled; explicit preview retains 9h shortfall",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "case": "explicit confirmation opens Do and preserves warning after return",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "existing confirmed plan remains usable during invalid draft",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "invalid block disabled; explicit preview retains 9h shortfall",
+      "passed": true
+    },
+    {
+      "width": 662,
+      "height": 432,
+      "case": "explicit confirmation opens Do and preserves warning after return",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "height": 900,
+      "case": "existing confirmed plan remains usable during invalid draft",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "height": 900,
+      "case": "invalid block disabled; explicit preview retains 9h shortfall",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "height": 900,
+      "case": "explicit confirmation opens Do and preserves warning after return",
+      "passed": true
+    }
+  ]
+}

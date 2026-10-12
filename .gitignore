@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+.env.local
+.env.test
+.env.staging
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (never commit large data)
+/data/
+*.db
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Test coverage
+htmlcov/
+.coverage
+coverage.xml
+.tracecov/
+
+# Docker
+docker-compose.override.yml
+
+# Node (frontend)
+node_modules/
+.next/
+out/
+.nuxt/
+
+# Build
+*.pyc
+*.pyo
+
+# AI logs — tracked structure, ignored content
+.ai-log/*.jsonl
+.ai-log/archive/
+
+# Local external repositories and generated working files
+canvas-lms/
+P-008-ci-fix/
+.tmp-cursus-media/
+lms-simulator/uploads/
+
+# Local reference decks
+*.pptx
+.pytest_cache/
+
+# Local vector-store state is generated at runtime
+src/agents/data/qdrant/

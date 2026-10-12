@@ -1,0 +1,539 @@
+{
+  "adaptive": {
+    "dataset_version": "adaptive-boundaries-2026-10-08-v1",
+    "sample_count": 60,
+    "unique_sample_count": 60,
+    "cases": [
+      {
+        "id": "policy:recall:True:completed:H0",
+        "category": "policy",
+        "expected": "active",
+        "actual": "active",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:True:completed:H1",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:True:completed:H5",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:False:completed:H0",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:False:completed:H1",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:False:completed:H5",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:True:awaiting_teacher:H0",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:True:awaiting_teacher:H1",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:recall:True:awaiting_teacher:H5",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:True:completed:H0",
+        "category": "policy",
+        "expected": "active",
+        "actual": "active",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:True:completed:H1",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:True:completed:H5",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:False:completed:H0",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:False:completed:H1",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:False:completed:H5",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:True:awaiting_teacher:H0",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:True:awaiting_teacher:H1",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:explain:True:awaiting_teacher:H5",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:why:True:completed:H0",
+        "category": "policy",
+        "expected": "active",
+        "actual": "active",
+        "passed": true
+      },
+      {
+        "id": "policy:why:True:completed:H1",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:why:True:completed:H5",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:why:False:completed:H0",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:why:False:completed:H1",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:why:False:completed:H5",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:why:True:awaiting_teacher:H0",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:why:True:awaiting_teacher:H1",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:why:True:awaiting_teacher:H5",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:application:True:completed:H0",
+        "category": "policy",
+        "expected": "active",
+        "actual": "active",
+        "passed": true
+      },
+      {
+        "id": "policy:application:True:completed:H1",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:application:True:completed:H5",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:application:False:completed:H0",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:application:False:completed:H1",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:application:False:completed:H5",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:application:True:awaiting_teacher:H0",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:application:True:awaiting_teacher:H1",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:application:True:awaiting_teacher:H5",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:True:completed:H0",
+        "category": "policy",
+        "expected": "completed",
+        "actual": "completed",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:True:completed:H1",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:True:completed:H5",
+        "category": "policy",
+        "expected": "verification_required",
+        "actual": "verification_required",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:False:completed:H0",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:False:completed:H1",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:False:completed:H5",
+        "category": "policy",
+        "expected": "needs_support",
+        "actual": "needs_support",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:True:awaiting_teacher:H0",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:True:awaiting_teacher:H1",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "policy:transfer:True:awaiting_teacher:H5",
+        "category": "policy",
+        "expected": "review_required",
+        "actual": "review_required",
+        "passed": true
+      },
+      {
+        "id": "metadata_only",
+        "category": "knowledge_gate",
+        "expected": "no_evidence",
+        "actual": "no_evidence",
+        "passed": true
+      },
+      {
+        "id": "transfer_without_prerequisite",
+        "category": "knowledge_gate",
+        "expected": "no_evidence",
+        "actual": "no_evidence",
+        "passed": true
+      },
+      {
+        "id": "closed_correct",
+        "category": "knowledge_gate",
+        "expected": "recognition",
+        "actual": "recognition",
+        "passed": true
+      },
+      {
+        "id": "application_without_reasoning",
+        "category": "knowledge_gate",
+        "expected": "conceptual",
+        "actual": "conceptual",
+        "passed": true
+      },
+      {
+        "id": "retention_before_probe",
+        "category": "knowledge_gate",
+        "expected": "transfer",
+        "actual": "transfer",
+        "passed": true
+      },
+      {
+        "id": "hinted_transfer",
+        "category": "knowledge_gate",
+        "expected": "application",
+        "actual": "application",
+        "passed": true
+      },
+      {
+        "id": "full_support",
+        "category": "knowledge_gate",
+        "expected": "conceptual",
+        "actual": "conceptual",
+        "passed": true
+      },
+      {
+        "id": "due_retention",
+        "category": "knowledge_gate",
+        "expected": "retained",
+        "actual": "retained",
+        "passed": true
+      },
+      {
+        "id": "small_drift",
+        "category": "replan",
+        "expected": "keep",
+        "actual": "keep",
+        "passed": true
+      },
+      {
+        "id": "missed_block",
+        "category": "replan",
+        "expected": "propose_draft",
+        "actual": "propose_draft",
+        "passed": true
+      },
+      {
+        "id": "duplicate_drift",
+        "category": "replan",
+        "expected": "keep",
+        "actual": "keep",
+        "passed": true
+      },
+      {
+        "id": "cooldown",
+        "category": "replan",
+        "expected": "keep",
+        "actual": "keep",
+        "passed": true
+      },
+      {
+        "id": "taxonomy_missing",
+        "category": "misconception",
+        "expected": "unknown",
+        "actual": "unknown",
+        "passed": true
+      },
+      {
+        "id": "hypothesis_ungrounded",
+        "category": "misconception",
+        "expected": "unknown",
+        "actual": "unknown",
+        "passed": true
+      },
+      {
+        "id": "taxonomy_grounded",
+        "category": "misconception",
+        "expected": "suspected",
+        "actual": "suspected",
+        "passed": true
+      }
+    ],
+    "metrics": {
+      "knowledge_gate_accuracy": 1.0,
+      "misconception_accuracy": 1.0,
+      "policy_accuracy": 1.0,
+      "replan_accuracy": 1.0
+    },
+    "overall_pass": true,
+    "validation_status": "offline_engineering_validation_only",
+    "limitations": [
+      "Developer-authored labels, not independent SME labels.",
+      "Tests gates/policy, not real student understanding or improved learning outcomes.",
+      "No Cohen kappa, probability calibration or learning gain claimed."
+    ]
+  },
+  "legacy_engineering": {
+    "dataset_version": "2026-10-07.v3",
+    "sample_counts": {
+      "planning_v1": 120,
+      "grounding_safety_v1": 120,
+      "understanding_journey_v1": 120,
+      "routing_support": 120,
+      "safety_adversarial_v1": 100,
+      "plan_intelligence_v2": 120,
+      "assessment_truth_v1": 140
+    },
+    "metrics": {
+      "plan_constraint_accuracy": 1.0,
+      "recovery_deadline_protection": 1.0,
+      "risk_recall": 1.0,
+      "risk_precision": 1.0,
+      "citation_decision_accuracy": 1.0,
+      "integrity_recall": 1.0,
+      "integrity_false_positive_rate": 0.0,
+      "diagnosis_macro_f1": 1.0,
+      "high_confidence_error_rate": 0.0,
+      "routing_accuracy": 1.0,
+      "adversarial_review_recall": 1.0,
+      "adversarial_rule_false_positive_rate": 0.0,
+      "rubric_normalization_accuracy": 1.0,
+      "kc_provenance_accuracy": 1.0,
+      "mastery_review_accuracy": 1.0,
+      "reflect_feedback_accuracy": 1.0,
+      "uncertainty_order_accuracy": 1.0,
+      "plan_quality_detection_accuracy": 1.0,
+      "closed_evaluator_accuracy": 1.0,
+      "false_mastery_acceptance_rate": 0.0,
+      "knowledge_update_gate_accuracy": 1.0,
+      "hint_cap_accuracy": 1.0
+    },
+    "thresholds": {
+      "plan_constraint_accuracy": 0.95,
+      "recovery_deadline_protection": 0.9,
+      "risk_recall": 0.85,
+      "risk_precision": 0.75,
+      "citation_decision_accuracy": 0.95,
+      "integrity_recall": 0.95,
+      "integrity_false_positive_rate_max": 0.1,
+      "diagnosis_macro_f1": 0.8,
+      "high_confidence_error_rate_max": 0.05,
+      "adversarial_review_recall": 0.98,
+      "adversarial_rule_false_positive_rate_max": 0.05,
+      "rubric_normalization_accuracy": 0.98,
+      "kc_provenance_accuracy": 0.98,
+      "mastery_review_accuracy": 0.98,
+      "reflect_feedback_accuracy": 0.98,
+      "uncertainty_order_accuracy": 1.0,
+      "plan_quality_detection_accuracy": 0.98,
+      "closed_evaluator_accuracy": 1.0,
+      "false_mastery_acceptance_rate_max": 0.0,
+      "knowledge_update_gate_accuracy": 1.0,
+      "hint_cap_accuracy": 1.0
+    },
+    "passed": {
+      "plan_constraint_accuracy": true,
+      "recovery_deadline_protection": true,
+      "risk_recall": true,
+      "risk_precision": true,
+      "citation_decision_accuracy": true,
+      "integrity_recall": true,
+      "integrity_false_positive_rate": true,
+      "diagnosis_macro_f1": true,
+      "high_confidence_error_rate": true,
+      "adversarial_review_recall": true,
+      "adversarial_rule_false_positive_rate": true,
+      "rubric_normalization_accuracy": true,
+      "kc_provenance_accuracy": true,
+      "mastery_review_accuracy": true,
+      "reflect_feedback_accuracy": true,
+      "uncertainty_order_accuracy": true,
+      "plan_quality_detection_accuracy": true,
+      "closed_evaluator_accuracy": true,
+      "false_mastery_acceptance_rate": true,
+      "knowledge_update_gate_accuracy": true,
+      "hint_cap_accuracy": true
+    },
+    "overall_pass": true,
+    "limitations": [
+      "Các mẫu hiện là fixture tổng hợp có nhãn; chưa thay thế đánh giá SME trên dữ liệu pilot.",
+      "Bộ adversarial là JSONL tách khỏi implementation; semantic classifier vẫn cần đánh giá bằng model thật.",
+      "Faithfulness ngữ nghĩa và LLM-as-Judge phải chạy riêng khi có model credential.",
+      "Plan v2 fixtures prove deterministic behavior, not improved learning outcomes; those require a longitudinal pilot."
+    ]
+  },
+  "live_model": {
+    "status": "not_run",
+    "reason": "explicit_flag_required"
+  },
+  "metric_definitions": {
+    "legacy.diagnosis_macro_f1": "Parser recovery of fixture-embedded labels, NOT student diagnosis accuracy.",
+    "legacy.false_mastery_acceptance_rate": "Closed-answer false acceptance on synthetic cases, NOT population false mastery."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "database": "postgresql",
+  "delivered": 3,
+  "replay": 0,
+  "daily_budget": 3,
+  "provider": "mocked",
+  "isolation": "transaction_schema_rolled_back",
+  "status": "passed",
+  "runtime": {
+    "backend_health": "ok",
+    "frontend_app_status": 200,
+    "service_worker_status": 200,
+    "service_worker_content_type": "application/javascript; charset=utf-8",
+    "service_worker_cache_control": "no-store"
+  }
+}

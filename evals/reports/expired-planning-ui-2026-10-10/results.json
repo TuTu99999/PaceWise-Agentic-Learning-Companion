@@ -1,0 +1,17 @@
+{
+  "mode": "offline fixture / headless Edge",
+  "results": [
+    {
+      "width": 390,
+      "height": 844,
+      "passed": true,
+      "case": "stale expired capacity refreshed; same-day and historical pins excluded; new draft still requires confirmation"
+    },
+    {
+      "width": 1366,
+      "height": 900,
+      "passed": true,
+      "case": "stale expired capacity refreshed; same-day and historical pins excluded; new draft still requires confirmation"
+    }
+  ]
+}

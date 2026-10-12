@@ -1,0 +1,147 @@
+name: pacewise
+
+x-backend-environment: &backend-environment
+  DATABASE_URL: postgresql+psycopg://pacewise:${PACEWISE_DB_PASSWORD:?PACEWISE_DB_PASSWORD is required}@postgres:5432/pacewise
+  COURSE_SOURCE_MODE: standalone
+  VECTOR_STORE_TYPE: qdrant
+  QDRANT_URL: http://qdrant:6333
+  COURSE_UPLOAD_DIR: /app/data/course-source/uploads
+  COURSE_MOCK_FILE_DIR: /app/data/course-source/mock-files
+  EMBEDDING_CACHE_DIR: /app/data/models/fastembed
+  RERANKER_CACHE_DIR: /app/data/models/flashrank
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pacewise
+      POSTGRES_USER: pacewise
+      POSTGRES_PASSWORD: ${PACEWISE_DB_PASSWORD:?PACEWISE_DB_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pacewise -d pacewise"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - private
+    restart: unless-stopped
+
+  migrate:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+    environment:
+      <<: *backend-environment
+    networks:
+      - private
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    env_file:
+      - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+    environment:
+      <<: *backend-environment
+    volumes:
+      - app_data:/app/data
+    networks:
+      - public
+      - private
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 18
+    restart: unless-stopped
+
+  worker:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    command: ["python", "-m", "src.worker"]
+    env_file:
+      - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+    environment:
+      <<: *backend-environment
+    volumes:
+      - app_data:/app/data
+    networks:
+      - public
+      - private
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  notification-worker:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    command: ["python", "-m", "src.notification_worker"]
+    env_file:
+      - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+    environment:
+      <<: *backend-environment
+    volumes:
+      - app_data:/app/data
+    networks:
+      - public
+      - private
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE is required}
+    ports:
+      - "80:80"
+    networks:
+      - public
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  public:
+  private:
+    internal: true
+
+volumes:
+  app_data:
+  postgres_data:
+  qdrant_data:

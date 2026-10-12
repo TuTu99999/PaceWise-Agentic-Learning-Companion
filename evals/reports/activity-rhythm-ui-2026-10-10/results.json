@@ -1,0 +1,85 @@
+{
+  "mode": "offline synthetic browser fixtures",
+  "results": [
+    {
+      "width": 390,
+      "case": "pause records unexpected interruption",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "reload restores checkpoint paused without absence",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "short Reflect records feeling separately from knowledge",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "SPA block change clears previous completion and timer",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "confirmed trial changes only course/activity preference, not defaults or plan",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "before/after distinguishes full completion, failed application and untested retention",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "manual activity preference survives reload without cross-course/type transfer or overflow",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "11 collapsed proposals, exact shortage, blocked confirmation",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "pause records unexpected interruption",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "reload restores checkpoint paused without absence",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "short Reflect records feeling separately from knowledge",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "SPA block change clears previous completion and timer",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "confirmed trial changes only course/activity preference, not defaults or plan",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "before/after distinguishes full completion, failed application and untested retention",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "manual activity preference survives reload without cross-course/type transfer or overflow",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "11 collapsed proposals, exact shortage, blocked confirmation",
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, Develop, phamkhactu]
+  pull_request:
+    branches: [main, develop, Develop, phamkhactu]
+
+jobs:
+  migration-smoke:
+    runs-on: [self-hosted, Windows, X64, team-8]
+    env:
+      CI_POSTGRES_CONTAINER: pacewise-ci-postgres-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The runtime lock is intentionally resolved for the Linux container and
+      # includes uvloop.  This job executes on the Windows self-hosted runner,
+      # so use the cross-platform CI lock while exercising the same Alembic
+      # migrations against a real PostgreSQL container.
+      - name: Install locked CI dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+
+      - name: Start isolated PostgreSQL 16 container
+        shell: powershell
+        run: |
+          $container = $env:CI_POSTGRES_CONTAINER
+          $containerId = docker run --detach `
+            --name $container `
+            --env POSTGRES_DB=pacewise_migration_smoke `
+            --env POSTGRES_USER=pacewise `
+            --env POSTGRES_PASSWORD=smoke-only-password `
+            --publish 127.0.0.1::5432 `
+            postgres:16-alpine
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not start PostgreSQL smoke-test container."
+          }
+
+          # Docker Desktop can return an empty `docker port` result for a
+          # short interval immediately after `docker run`. Read the structured
+          # inspection state and retry until the dynamic host port appears.
+          $port = $null
+          for ($attempt = 1; $attempt -le 20; $attempt++) {
+            $inspectionJson = docker inspect $container 2>$null
+            if ($LASTEXITCODE -eq 0 -and $inspectionJson) {
+              $inspection = $inspectionJson | ConvertFrom-Json
+              $binding = $inspection[0].NetworkSettings.Ports.'5432/tcp' | Select-Object -First 1
+              if ($binding -and $binding.HostPort -match '^\d+$') {
+                $port = $binding.HostPort
+                break
+              }
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $port) {
+            docker inspect $container
+            docker logs $container
+            throw "Could not resolve the PostgreSQL smoke-test port."
+          }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "CI_POSTGRES_PORT=$port"
+
+          $ready = $false
+          for ($attempt = 1; $attempt -le 30; $attempt++) {
+            docker exec $container pg_isready `
+              --username pacewise `
+              --dbname pacewise_migration_smoke | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+              $ready = $true
+              break
+            }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $ready) {
+            docker logs $container
+            throw "PostgreSQL did not become ready in time."
+          }
+
+      - name: Apply schema to an empty PostgreSQL database
+        shell: powershell
+        run: |
+          $env:APP_ENV = "development"
+          $env:DATABASE_URL = "postgresql+psycopg://pacewise:smoke-only-password@127.0.0.1:$env:CI_POSTGRES_PORT/pacewise_migration_smoke"
+          python -m alembic upgrade head
+          if ($LASTEXITCODE -ne 0) {
+            throw "Alembic migration smoke test failed."
+          }
+
+      - name: Verify revision and split schemas
+        shell: powershell
+        run: |
+          $env:DATABASE_URL = "postgresql+psycopg://pacewise:smoke-only-password@127.0.0.1:$env:CI_POSTGRES_PORT/pacewise_migration_smoke"
+          python -c "import os; from sqlalchemy import create_engine, inspect, text; e=create_engine(os.environ['DATABASE_URL']); i=inspect(e); assert e.connect().execute(text('select version_num from alembic_version')).scalar_one() == '20261012_02'; assert 'pacewise_rag_ingestion_jobs' in i.get_table_names(); assert 'courses' in i.get_table_names(schema='course_source'); assert 'alembic_version' not in i.get_table_names(schema='course_source')"
+          if ($LASTEXITCODE -ne 0) {
+            throw "PostgreSQL schema verification failed."
+          }
+
+      - name: Remove PostgreSQL smoke-test container
+        if: always()
+        shell: powershell
+        run: |
+          if ($env:CI_POSTGRES_CONTAINER) {
+            docker rm --force $env:CI_POSTGRES_CONTAINER | Out-Null
+          }
+
+  lint-and-test:
+    runs-on: [self-hosted, Windows, X64, team-8]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install locked Python dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+
+      - name: Lint with ruff
+        run: >-
+          python -m ruff check src/ evals/ tests/ lms-simulator/app/
+          lms-simulator/tests/ scripts/release_gate.py scripts/migrate_database.py
+          scripts/migrate_course_materials_to_s3.py
+          scripts/evaluate_plan_background.py scripts/evaluate_plan_personas.py
+          scripts/benchmark_replan_architecture.py --no-cache
+
+      - name: Run backend tests
+        run: python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-fail-under=83
+        env:
+          APP_ENV: test
+          OPENAI_API_KEY: test-key
+          PYTHONUTF8: "1"
+
+      - name: Run deterministic AI evaluation (4 x 120 + 100 adversarial samples)
+        run: python -m evals.run_agent_eval
+        env:
+          APP_ENV: test
+          OPENAI_API_KEY: test-key
+          PYTHONUTF8: "1"
+
+      - name: Run reproducible manual acceptance evidence
+        run: python -m evals.run_manual_evidence
+        env:
+          APP_ENV: test
+          OPENAI_API_KEY: test-key
+          PYTHONUTF8: "1"
+
+      - name: Run LMS simulator tests
+        run: python -m pytest tests/ -q
+        working-directory: lms-simulator
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        run: npm.cmd ci --no-audit --no-fund
+        working-directory: frontend/pacewise
+
+      - name: Run frontend unit and accessibility tests
+        run: npm.cmd test
+        working-directory: frontend/pacewise
+        env:
+          # Keep Node predictable on the shared Windows runner where Docker/WSL
+          # may already consume most of the available commit memory.
+          NODE_OPTIONS: --max-old-space-size=1536
+
+      - name: Typecheck frontend
+        run: npm.cmd run typecheck
+        working-directory: frontend/pacewise
+        env:
+          NODE_OPTIONS: --max-old-space-size=1536
+
+      - name: Build frontend production bundle
+        run: npm.cmd run build
+        working-directory: frontend/pacewise
+        env:
+          NODE_OPTIONS: --max-old-space-size=1536
+
+      - name: Audit Python dependencies
+        run: python -m pip_audit --disable-pip --no-deps -r requirements.lock
+
+      - name: Audit frontend dependencies
+        # The final nginx image contains only static assets, not build/test
+        # node_modules. Trivy separately scans the deployed image.
+        run: npm.cmd audit --omit=dev --audit-level=high
+        working-directory: frontend/pacewise
+
+  container-scan:
+    name: Build and scan ${{ matrix.name }} image
+    needs: [lint-and-test, migration-smoke]
+    runs-on: [self-hosted, Windows, X64, team-8]
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: backend
+            dockerfile: Dockerfile
+          - name: frontend
+            dockerfile: frontend/pacewise/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build --file "${{ matrix.dockerfile }}" --tag "pacewise-${{ matrix.name }}:${{ github.sha }}" .
+
+      - name: Scan image for fixable high and critical vulnerabilities
+        shell: powershell
+        run: |
+          docker run --rm `
+            --volume /var/run/docker.sock:/var/run/docker.sock `
+            --volume pacewise-trivy-cache:/root/.cache/ `
+            aquasec/trivy:0.65.0 image `
+            --format table `
+            --exit-code 1 `
+            --ignore-unfixed `
+            --severity HIGH,CRITICAL `
+            "pacewise-${{ matrix.name }}:${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Trivy found a fixable HIGH or CRITICAL vulnerability."
+          }
+
+      - name: Remove scanned image
+        if: always()
+        shell: powershell
+        run: docker image rm --force "pacewise-${{ matrix.name }}:${{ github.sha }}"

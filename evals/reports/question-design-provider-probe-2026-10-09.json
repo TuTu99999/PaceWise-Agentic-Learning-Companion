@@ -1,0 +1,9 @@
+{
+  "date": "2026-10-09",
+  "input": "synthetic binary-relation reference and answer, no personal data",
+  "before_transport_fix": {"elapsed_seconds": 42.75, "generated": false, "calls": 1},
+  "after_transport_fix": {"elapsed_seconds": 8.16, "generated": false, "calls": 1},
+  "request_policy": {"timeout_seconds": 8, "max_retries": 0, "max_tokens": 350},
+  "validated": ["bounded provider fallback"],
+  "not_validated": ["live generated-question quality", "live grader quality", "real learner outcomes"]
+}

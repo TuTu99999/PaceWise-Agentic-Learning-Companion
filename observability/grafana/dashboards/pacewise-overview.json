@@ -1,0 +1,76 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {
+      "type": "timeseries", "title": "API p95 latency (seconds)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(pacewise_http_request_duration_seconds_bucket[5m])))"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+    },
+    {
+      "type": "timeseries", "title": "Model p95 latency by task",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, task) (rate(pacewise_llm_duration_seconds_bucket[5m])))", "legendFormat": "{{task}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+    },
+    {
+      "type": "timeseries", "title": "Provider admission and cache",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum by (outcome) (rate(pacewise_llm_admission_total[5m]))", "legendFormat": "admission {{outcome}}"}, {"expr": "sum by (outcome) (rate(pacewise_llm_cache_total[5m]))", "legendFormat": "cache {{outcome}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+    },
+    {
+      "type": "timeseries", "title": "Model concurrency and queue",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "pacewise_llm_active", "legendFormat": "active"}, {"expr": "pacewise_llm_waiting", "legendFormat": "waiting"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+    },
+    {
+      "type": "timeseries", "title": "Model routing",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum by (task, tier) (rate(pacewise_llm_routing_total[5m]))", "legendFormat": "{{task}} {{tier}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32}
+    },
+    {
+      "type": "timeseries", "title": "Token rate and estimated cost",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum by (token_type) (rate(pacewise_llm_tokens_total[5m]))", "legendFormat": "{{token_type}} tokens/s"}, {"expr": "sum(rate(pacewise_llm_estimated_cost_usd_total[5m]))", "legendFormat": "estimated USD/s (configure prices)"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32}
+    },
+    {
+      "type": "timeseries", "title": "Private trace delivery health",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum by (outcome) (rate(pacewise_trace_operations_total[5m]))", "legendFormat": "{{outcome}}"}],
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40}
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP request rate",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum by (path, status) (rate(pacewise_http_requests_total[5m]))", "legendFormat": "{{status}} {{path}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Agent node mean latency",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum by (node) (rate(pacewise_agent_node_duration_seconds_sum[5m])) / sum by (node) (rate(pacewise_agent_node_duration_seconds_count[5m]))", "legendFormat": "{{node}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "RAG operations",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum by (stage, outcome) (rate(pacewise_rag_operations_total[5m]))", "legendFormat": "{{stage}} {{outcome}}"}],
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+    }
+  ],
+  "schemaVersion": 41,
+  "tags": ["pacewise"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "title": "PaceWise Overview",
+  "uid": "pacewise-overview",
+  "version": 1
+}

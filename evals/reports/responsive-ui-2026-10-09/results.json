@@ -1,0 +1,660 @@
+{
+  "mode": "offline fixtures / headless Edge",
+  "results": [
+    {
+      "role": "student",
+      "width": 320,
+      "height": 740,
+      "viewport": 320,
+      "scrollWidth": 320,
+      "days": 1,
+      "calendar": {
+        "width": 294,
+        "height": 246.40625,
+        "top": 412.59375,
+        "bottom": 659
+      },
+      "nav": {
+        "width": 320,
+        "height": 68,
+        "top": 672,
+        "bottom": 740
+      },
+      "board": {
+        "width": 296,
+        "height": 408,
+        "top": 252,
+        "bottom": 660
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "width": 390,
+      "height": 844,
+      "viewport": 390,
+      "scrollWidth": 390,
+      "days": 2,
+      "calendar": {
+        "width": 364,
+        "height": 350.40625,
+        "top": 412.59375,
+        "bottom": 763
+      },
+      "nav": {
+        "width": 390,
+        "height": 68,
+        "top": 776,
+        "bottom": 844
+      },
+      "board": {
+        "width": 366,
+        "height": 512,
+        "top": 252,
+        "bottom": 764
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "width": 430,
+      "height": 932,
+      "viewport": 430,
+      "scrollWidth": 430,
+      "days": 2,
+      "calendar": {
+        "width": 404,
+        "height": 462.40625,
+        "top": 388.59375,
+        "bottom": 851
+      },
+      "nav": {
+        "width": 430,
+        "height": 68,
+        "top": 864,
+        "bottom": 932
+      },
+      "board": {
+        "width": 406,
+        "height": 624,
+        "top": 228,
+        "bottom": 852
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "width": 768,
+      "height": 1024,
+      "viewport": 768,
+      "scrollWidth": 768,
+      "days": 3,
+      "calendar": {
+        "width": 734,
+        "height": 481.8125,
+        "top": 457.1875,
+        "bottom": 939
+      },
+      "nav": {
+        "width": 768,
+        "height": 68,
+        "top": 956,
+        "bottom": 1024
+      },
+      "board": {
+        "width": 736,
+        "height": 704.40625,
+        "top": 235.59375,
+        "bottom": 940
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "width": 1024,
+      "height": 768,
+      "viewport": 1024,
+      "scrollWidth": 1024,
+      "days": 7,
+      "calendar": {
+        "width": 918,
+        "height": 418.8125,
+        "top": 332.1875,
+        "bottom": 751
+      },
+      "nav": {
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "bottom": 0
+      },
+      "board": {
+        "width": 920,
+        "height": 580.40625,
+        "top": 171.59375,
+        "bottom": 752
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "width": 1366,
+      "height": 900,
+      "viewport": 1366,
+      "scrollWidth": 1366,
+      "days": 7,
+      "calendar": {
+        "width": 1260,
+        "height": 602.8125,
+        "top": 280.1875,
+        "bottom": 883
+      },
+      "nav": {
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "bottom": 0
+      },
+      "board": {
+        "width": 1262,
+        "height": 764.40625,
+        "top": 119.59375,
+        "bottom": 884
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "width": 1920,
+      "height": 1080,
+      "viewport": 1920,
+      "scrollWidth": 1920,
+      "days": 7,
+      "calendar": {
+        "width": 1362,
+        "height": 843.8125,
+        "top": 219.1875,
+        "bottom": 1063
+      },
+      "nav": {
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "bottom": 0
+      },
+      "board": {
+        "width": 1816,
+        "height": 944.40625,
+        "top": 119.59375,
+        "bottom": 1064
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "interaction": "Sunday navigation and mobile exact-time dialog",
+      "passed": true
+    },
+    {
+      "role": "student",
+      "interaction": "short landscape scroll",
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "learn",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "settings",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "reflect",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "learn",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "settings",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "reflect",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "learn",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "settings",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    },
+    {
+      "role": "student",
+      "route": "reflect",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "width": 320,
+      "height": 740,
+      "viewport": 320,
+      "scrollWidth": 320,
+      "days": 1,
+      "calendar": {
+        "width": 294,
+        "height": 214.40625,
+        "top": 444.59375,
+        "bottom": 659
+      },
+      "nav": {
+        "width": 320,
+        "height": 68,
+        "top": 672,
+        "bottom": 740
+      },
+      "board": {
+        "width": 296,
+        "height": 328,
+        "top": 332,
+        "bottom": 660
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "width": 390,
+      "height": 844,
+      "viewport": 390,
+      "scrollWidth": 390,
+      "days": 2,
+      "calendar": {
+        "width": 364,
+        "height": 334.40625,
+        "top": 428.59375,
+        "bottom": 763
+      },
+      "nav": {
+        "width": 390,
+        "height": 68,
+        "top": 776,
+        "bottom": 844
+      },
+      "board": {
+        "width": 366,
+        "height": 448,
+        "top": 316,
+        "bottom": 764
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "width": 430,
+      "height": 932,
+      "viewport": 430,
+      "scrollWidth": 430,
+      "days": 2,
+      "calendar": {
+        "width": 404,
+        "height": 422.40625,
+        "top": 428.59375,
+        "bottom": 851
+      },
+      "nav": {
+        "width": 430,
+        "height": 68,
+        "top": 864,
+        "bottom": 932
+      },
+      "board": {
+        "width": 406,
+        "height": 536,
+        "top": 316,
+        "bottom": 852
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "width": 768,
+      "height": 1024,
+      "viewport": 768,
+      "scrollWidth": 768,
+      "days": 3,
+      "calendar": {
+        "width": 734,
+        "height": 602.8125,
+        "top": 336.1875,
+        "bottom": 939
+      },
+      "nav": {
+        "width": 768,
+        "height": 68,
+        "top": 956,
+        "bottom": 1024
+      },
+      "board": {
+        "width": 736,
+        "height": 716.40625,
+        "top": 223.59375,
+        "bottom": 940
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "width": 1024,
+      "height": 768,
+      "viewport": 1024,
+      "scrollWidth": 1024,
+      "days": 7,
+      "calendar": {
+        "width": 918,
+        "height": 515.8125,
+        "top": 235.1875,
+        "bottom": 751
+      },
+      "nav": {
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "bottom": 0
+      },
+      "board": {
+        "width": 920,
+        "height": 592.40625,
+        "top": 159.59375,
+        "bottom": 752
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "interaction": "icon-only rail and delayed tooltip",
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "width": 1366,
+      "height": 900,
+      "viewport": 1366,
+      "scrollWidth": 1366,
+      "days": 7,
+      "calendar": {
+        "width": 1260,
+        "height": 695.8125,
+        "top": 187.1875,
+        "bottom": 883
+      },
+      "nav": {
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "bottom": 0
+      },
+      "board": {
+        "width": 1262,
+        "height": 772.40625,
+        "top": 111.59375,
+        "bottom": 884
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "width": 1920,
+      "height": 1080,
+      "viewport": 1920,
+      "scrollWidth": 1920,
+      "days": 7,
+      "calendar": {
+        "width": 1814,
+        "height": 875.8125,
+        "top": 187.1875,
+        "bottom": 1063
+      },
+      "nav": {
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "bottom": 0
+      },
+      "board": {
+        "width": 1816,
+        "height": 952.40625,
+        "top": 111.59375,
+        "bottom": 1064
+      },
+      "scrolling": {
+        "wheelScrollTop": 360,
+        "reachesLastHour": true,
+        "singlePageScroll": false
+      },
+      "errors": 0,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "interaction": "Sunday navigation and mobile exact-time dialog",
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "interaction": "short landscape scroll",
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/tasks",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/profile",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/assessment",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/review",
+      "width": 320,
+      "scrollWidth": 320,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/tasks",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/profile",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/assessment",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/review",
+      "width": 768,
+      "scrollWidth": 768,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/tasks",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/profile",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/assessment",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    },
+    {
+      "role": "instructor",
+      "route": "instructor/review",
+      "width": 1366,
+      "scrollWidth": 1366,
+      "passed": true
+    }
+  ]
+}

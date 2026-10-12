@@ -1,0 +1,24 @@
+groups:
+  - name: pacewise-runtime
+    rules:
+      - alert: PaceWiseBackendUnavailable
+        expr: up{job="pacewise-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PaceWise backend scrape failed"
+      - alert: PaceWiseHighServerErrorRate
+        expr: sum(rate(pacewise_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(pacewise_http_requests_total[5m])), 0.01) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of API requests failed"
+      - alert: PaceWiseModelOverload
+        expr: sum(rate(pacewise_llm_admission_total{outcome=~"rejected|timeout"}[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model admission is rejecting excess workload"

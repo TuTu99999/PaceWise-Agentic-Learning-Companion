@@ -1,0 +1,67 @@
+# Parked LMS stack. API/database only; no host ports or browser UI by default.
+# Run from the repo root with --env-file .env.
+name: pacewise-lms
+
+services:
+  lms-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: canvas_development
+      POSTGRES_USER: canvas
+      POSTGRES_PASSWORD: ${LMS_DB_PASSWORD:-canvas-local-only}
+    volumes:
+      - lms_postgres_data:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canvas -d canvas_development"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  lms-simulator:
+    build:
+      context: ..
+      dockerfile: lms-simulator/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://canvas:${LMS_DB_PASSWORD:-canvas-local-only}@lms-postgres:5432/canvas_development
+      PACEWISE_API_KEY: ${PACEWISE_API_KEY:-development-only-service-key-change-me}
+      PACEWISE_LAUNCH_SECRET: ${PACEWISE_LAUNCH_SECRET:-development-only-launch-secret-change-me}
+      PACEWISE_URL: ${PACEWISE_URL:-http://localhost:5173}
+      SESSION_LIFETIME_HOURS: ${SESSION_LIFETIME_HOURS:-12}
+      ALLOW_DEMO_SUBMISSION_TIMING: ${ALLOW_DEMO_SUBMISSION_TIMING:-true}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      LMS_WEB_ENABLED: "false"
+    volumes:
+      - lms_uploads:/app/uploads
+    networks:
+      database:
+      service:
+        aliases: [lms-api]
+    depends_on:
+      lms-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/api/health')"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  # Explicit old names preserve the existing PaceWise demo database/uploads.
+  # Never start two Postgres containers against this same data volume.
+  lms_postgres_data:
+    name: ${LMS_DATA_VOLUME:-pacewise_lms_postgres_data}
+    external: true
+  lms_uploads:
+    name: ${LMS_UPLOADS_VOLUME:-pacewise_lms_uploads}
+    external: true
+
+networks:
+  database:
+    internal: true
+  service:
+    name: pacewise-lms-service
+    internal: true

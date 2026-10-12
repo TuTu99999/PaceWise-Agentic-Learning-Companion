@@ -1,0 +1,50 @@
+[
+  {
+    "theme": "light",
+    "width": 390,
+    "height": 844,
+    "pastLessonHasDelete": true,
+    "previewBeforeCommit": true,
+    "singleAndBulkRemoval": true,
+    "explicitBulkAcknowledgement": true,
+    "restoredOldLessonVisible": true,
+    "noHorizontalOverflow": true,
+    "pageErrors": []
+  },
+  {
+    "theme": "light",
+    "width": 1366,
+    "height": 900,
+    "pastLessonHasDelete": true,
+    "previewBeforeCommit": true,
+    "singleAndBulkRemoval": true,
+    "explicitBulkAcknowledgement": true,
+    "restoredOldLessonVisible": true,
+    "noHorizontalOverflow": true,
+    "pageErrors": []
+  },
+  {
+    "theme": "dark",
+    "width": 390,
+    "height": 844,
+    "pastLessonHasDelete": true,
+    "previewBeforeCommit": true,
+    "singleAndBulkRemoval": true,
+    "explicitBulkAcknowledgement": true,
+    "restoredOldLessonVisible": true,
+    "noHorizontalOverflow": true,
+    "pageErrors": []
+  },
+  {
+    "theme": "dark",
+    "width": 1366,
+    "height": 900,
+    "pastLessonHasDelete": true,
+    "previewBeforeCommit": true,
+    "singleAndBulkRemoval": true,
+    "explicitBulkAcknowledgement": true,
+    "restoredOldLessonVisible": true,
+    "noHorizontalOverflow": true,
+    "pageErrors": []
+  }
+]

@@ -1,0 +1,65 @@
+{
+  "mode": "offline synthetic browser fixtures",
+  "results": [
+    {
+      "width": 390,
+      "case": "pause records unexpected interruption",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "reload restores checkpoint paused without absence",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "short Reflect records feeling separately from knowledge",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "SPA block change clears previous completion and timer",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "rhythm changes only confirmed preference, not applied plan",
+      "passed": true
+    },
+    {
+      "width": 390,
+      "case": "11 collapsed proposals, exact shortage, blocked confirmation",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "pause records unexpected interruption",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "reload restores checkpoint paused without absence",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "short Reflect records feeling separately from knowledge",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "SPA block change clears previous completion and timer",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "rhythm changes only confirmed preference, not applied plan",
+      "passed": true
+    },
+    {
+      "width": 1366,
+      "case": "11 collapsed proposals, exact shortage, blocked confirmation",
+      "passed": true
+    }
+  ]
+}

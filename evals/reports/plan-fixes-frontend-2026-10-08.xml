@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="125" failures="0" errors="0" time="2.2865404">
+    <testsuite name="tests/course-scope.test.ts" timestamp="2026-10-08T03:36:18.005Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.0041557">
+        <testcase classname="tests/course-scope.test.ts" name="course-scoped PaceWise data &gt; keeps only tasks, sessions and plan blocks of the selected course" time="0.0024517">
+        </testcase>
+        <testcase classname="tests/course-scope.test.ts" name="course-scoped PaceWise data &gt; preserves the aggregate view when no course is selected" time="0.0004628">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/do-api.test.ts" timestamp="2026-10-08T03:36:18.009Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.0190099">
+        <testcase classname="tests/do-api.test.ts" name="Do Agent API &gt; prepares a confirmed study block with course-scoped resources" time="0.0147841">
+        </testcase>
+        <testcase classname="tests/do-api.test.ts" name="Do Agent API &gt; returns a structured completion evaluation" time="0.0027844">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/do-assessment-selection.test.ts" timestamp="2026-10-08T03:36:18.010Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.0034856">
+        <testcase classname="tests/do-assessment-selection.test.ts" name="Do assessment selection &gt; matches approved checkpoints to the active task topic despite Vietnamese accents" time="0.0016298">
+        </testcase>
+        <testcase classname="tests/do-assessment-selection.test.ts" name="Do assessment selection &gt; does not show an unrelated approved assessment in the current study session" time="0.000393">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/initial-state.test.ts" timestamp="2026-10-08T03:36:18.012Z" hostname="LAPTOP-R9CSS5DH" tests="1" failures="0" errors="0" skipped="0" time="0.0035715">
+        <testcase classname="tests/initial-state.test.ts" name="production initial state &gt; does not expose seeded learner activity as real data" time="0.002454">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/instructor-overview-cache.test.ts" timestamp="2026-10-08T03:36:18.012Z" hostname="LAPTOP-R9CSS5DH" tests="4" failures="0" errors="0" skipped="0" time="0.0065918">
+        <testcase classname="tests/instructor-overview-cache.test.ts" name="instructor overview cache &gt; restores the latest aggregate for the same user and course" time="0.0028175">
+        </testcase>
+        <testcase classname="tests/instructor-overview-cache.test.ts" name="instructor overview cache &gt; does not reuse another course cache" time="0.0003939">
+        </testcase>
+        <testcase classname="tests/instructor-overview-cache.test.ts" name="instructor overview cache &gt; supports a short stale-while-revalidate freshness window" time="0.0018782">
+        </testcase>
+        <testcase classname="tests/instructor-overview-cache.test.ts" name="instructor overview cache &gt; drops expired data" time="0.0004062">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/landing-integration.test.ts" timestamp="2026-10-08T03:36:18.014Z" hostname="LAPTOP-R9CSS5DH" tests="4" failures="0" errors="0" skipped="0" time="0.0068638">
+        <testcase classname="tests/landing-integration.test.ts" name="landing page integration &gt; contains exactly one HTML document" time="0.0044147">
+        </testcase>
+        <testcase classname="tests/landing-integration.test.ts" name="landing page integration &gt; loads the responsive and integration assets" time="0.000625">
+        </testcase>
+        <testcase classname="tests/landing-integration.test.ts" name="landing page integration &gt; defines mobile breakpoints without a forced desktop width" time="0.0002234">
+        </testcase>
+        <testcase classname="tests/landing-integration.test.ts" name="landing page integration &gt; routes login actions to the PaceWise app on the same origin" time="0.000257">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/plan-api.test.ts" timestamp="2026-10-08T03:36:18.016Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.0157456">
+        <testcase classname="tests/plan-api.test.ts" name="generatePlan &gt; returns an infeasible draft for review instead of reporting a system failure" time="0.0114651">
+        </testcase>
+        <testcase classname="tests/plan-api.test.ts" name="generatePlan &gt; requests weekly goals as a separate student-review stage" time="0.0031946">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/recovery-calendar.test.tsx" timestamp="2026-10-08T03:36:18.018Z" hostname="LAPTOP-R9CSS5DH" tests="1" failures="0" errors="0" skipped="0" time="0.1151773">
+        <testcase classname="tests/recovery-calendar.test.tsx" name="RecoveryCalendarPreview &gt; shows the current and next week with LMS and proposed study blocks" time="0.1140445">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/recovery-capacity.test.tsx" timestamp="2026-10-08T03:36:18.018Z" hostname="LAPTOP-R9CSS5DH" tests="1" failures="0" errors="0" skipped="0" time="0.0602418">
+        <testcase classname="tests/recovery-capacity.test.tsx" name="RecoveryCapacitySummary &gt; explains workload, scheduled time, and unresolved capacity separately" time="0.0591685">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/states-accessibility.test.tsx" timestamp="2026-10-08T03:36:18.019Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.1367863">
+        <testcase classname="tests/states-accessibility.test.tsx" name="shared UI states &gt; renders an actionable error state" time="0.0822112">
+        </testcase>
+        <testcase classname="tests/states-accessibility.test.tsx" name="shared UI states &gt; has no detectable accessibility violations in the empty state" time="0.0529527">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/time-select.test.tsx" timestamp="2026-10-08T03:36:18.020Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.2432835">
+        <testcase classname="tests/time-select.test.tsx" name="TimeSelect &gt; renders a locale-independent 24-hour list including 24:00 for end time" time="0.1941413">
+        </testcase>
+        <testcase classname="tests/time-select.test.tsx" name="TimeSelect &gt; preserves an existing non-standard minute value" time="0.0478579">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/workflow-journey.test.ts" timestamp="2026-10-08T03:36:18.021Z" hostname="LAPTOP-R9CSS5DH" tests="1" failures="0" errors="0" skipped="0" time="0.0225802">
+        <testcase classname="tests/workflow-journey.test.ts" name="Plan → Do → Check → Recover → Reflect → teacher review &gt; uses the authenticated backend contract for the complete role journey" time="0.0213461">
+        </testcase>
+    </testsuite>
+    <testsuite name="tests/workflow-state.test.ts" timestamp="2026-10-08T03:36:18.022Z" hostname="LAPTOP-R9CSS5DH" tests="14" failures="0" errors="0" skipped="0" time="0.0162898">
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; round-trips personal schedule slots through workspace hydration after reload" time="0.0038326">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; reapplies saved progress to a fresh LMS task snapshot" time="0.0020043">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; keeps reflections isolated by course and calendar week" time="0.0004982">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; carries a completed Do result into activity and weekly reflection state" time="0.0008665">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; applies the teacher resolution returned by synchronization" time="0.0004784">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; creates a reviewable impact only when a later LMS snapshot changes the plan" time="0.0019813">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; reconciles legacy DS201 milestone titles with the current LMS assignment title" time="0.0005618">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; detects an LMS deadline change against the persisted baseline after reopening" time="0.0004598">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; keeps the plan unchanged when new personal busy time creates a conflict" time="0.001106">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; keeps confirmed plan/history and creates a reviewable impact when LMS removes a task" time="0.0011438">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; refreshes pilot metrics immediately after confirming a plan" time="0.00096">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; confirms a partial plan so capacity shortfalls can enter Progress and Recover" time="0.0003881">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; binds recovery options to their drift context for the two-week diff route" time="0.0001586">
+        </testcase>
+        <testcase classname="tests/workflow-state.test.ts" name="durable learner workflow state &gt; commits only the current week and keeps next-week recovery blocks provisional" time="0.0004108">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/hooks/useDerived.test.ts" timestamp="2026-10-08T03:36:18.027Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.004824">
+        <testcase classname="src/hooks/useDerived.test.ts" name="buildCourseScope &gt; returns the complete cross-course view when no course filter is selected" time="0.00256">
+        </testcase>
+        <testcase classname="src/hooks/useDerived.test.ts" name="buildCourseScope &gt; filters tasks, sessions and plan blocks together for one course" time="0.0010653">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/instructorWorkspace.test.ts" timestamp="2026-10-08T03:36:18.028Z" hostname="LAPTOP-R9CSS5DH" tests="3" failures="0" errors="0" skipped="0" time="0.003421">
+        <testcase classname="src/utils/instructorWorkspace.test.ts" name="instructor workspace schedule utilities &gt; calculates exact duration and accepts a valid offline event" time="0.0015983">
+        </testcase>
+        <testcase classname="src/utils/instructorWorkspace.test.ts" name="instructor workspace schedule utilities &gt; rejects invalid ranges and online classes without a URL" time="0.0004032">
+        </testcase>
+        <testcase classname="src/utils/instructorWorkspace.test.ts" name="instructor workspace schedule utilities &gt; creates an editable PaceWise-owned event with a positive duration" time="0.0003025">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/lmsPlanning.test.ts" timestamp="2026-10-08T03:36:18.030Z" hostname="LAPTOP-R9CSS5DH" tests="6" failures="0" errors="0" skipped="0" time="0.0111095">
+        <testcase classname="src/utils/lmsPlanning.test.ts" name="LMS planning constraints &gt; turns fixed LMS events into exact-date unavailable slots" time="0.0038846">
+        </testcase>
+        <testcase classname="src/utils/lmsPlanning.test.ts" name="LMS planning constraints &gt; detects a newly added event that conflicts with a saved study block" time="0.0021053">
+        </testcase>
+        <testcase classname="src/utils/lmsPlanning.test.ts" name="LMS planning constraints &gt; detects released capacity without modifying the plan" time="0.0017061">
+        </testcase>
+        <testcase classname="src/utils/lmsPlanning.test.ts" name="LMS planning constraints &gt; detects earlier deadlines and removed assignments" time="0.0007053">
+        </testcase>
+        <testcase classname="src/utils/lmsPlanning.test.ts" name="LMS planning constraints &gt; detects a personal busy interval that conflicts with a saved study block" time="0.0006495">
+        </testcase>
+        <testcase classname="src/utils/lmsPlanning.test.ts" name="LMS planning constraints &gt; reports capacity released by a shortened or removed busy interval" time="0.0006063">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/pilotMetrics.test.ts" timestamp="2026-10-08T03:36:18.032Z" hostname="LAPTOP-R9CSS5DH" tests="6" failures="0" errors="0" skipped="0" time="0.0068768">
+        <testcase classname="src/utils/pilotMetrics.test.ts" name="pilot metrics and adaptive estimates &gt; learns a bounded course multiplier when a task is completed" time="0.0031172">
+        </testcase>
+        <testcase classname="src/utils/pilotMetrics.test.ts" name="pilot metrics and adaptive estimates &gt; does not override an estimate confirmed by the student" time="0.000306">
+        </testcase>
+        <testcase classname="src/utils/pilotMetrics.test.ts" name="pilot metrics and adaptive estimates &gt; reports plan coverage and on-time submission rate" time="0.0011844">
+        </testcase>
+        <testcase classname="src/utils/pilotMetrics.test.ts" name="pilot metrics and adaptive estimates &gt; counts submitted but not yet graded assignments in the on-time metric" time="0.0002986">
+        </testcase>
+        <testcase classname="src/utils/pilotMetrics.test.ts" name="pilot metrics and adaptive estimates &gt; measures plan coverage only for the 14-day deadline horizon" time="0.0003912">
+        </testcase>
+        <testcase classname="src/utils/pilotMetrics.test.ts" name="pilot metrics and adaptive estimates &gt; excludes planned assignments outside the 14-day horizon from risk metrics" time="0.0002813">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/planConfirmation.test.ts" timestamp="2026-10-08T03:36:18.035Z" hostname="LAPTOP-R9CSS5DH" tests="6" failures="0" errors="0" skipped="0" time="0.0036155">
+        <testcase classname="src/utils/planConfirmation.test.ts" name="plan confirmation gates &gt; requires a draft" time="0.0013797">
+        </testcase>
+        <testcase classname="src/utils/planConfirmation.test.ts" name="plan confirmation gates &gt; blocks capacity shortfall" time="0.0003154">
+        </testcase>
+        <testcase classname="src/utils/planConfirmation.test.ts" name="plan confirmation gates &gt; blocks hard errors even with enough capacity" time="0.0001717">
+        </testcase>
+        <testcase classname="src/utils/planConfirmation.test.ts" name="plan confirmation gates &gt; allows P80 warnings for explicit student review" time="0.0002021">
+        </testcase>
+        <testcase classname="src/utils/planConfirmation.test.ts" name="plan confirmation gates &gt; blocks legacy drafts containing violations" time="0.0002055">
+        </testcase>
+        <testcase classname="src/utils/planConfirmation.test.ts" name="plan confirmation gates &gt; retains compatible capacity-only legacy drafts" time="0.0001522">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/planPins.test.ts" timestamp="2026-10-08T03:36:18.036Z" hostname="LAPTOP-R9CSS5DH" tests="3" failures="0" errors="0" skipped="0" time="0.0071854">
+        <testcase classname="src/utils/planPins.test.ts" name="pinnedBlocksForReanalysis &gt; releases future AI blocks but keeps the learner choice" time="0.0042535">
+        </testcase>
+        <testcase classname="src/utils/planPins.test.ts" name="pinnedBlocksForReanalysis &gt; keeps elapsed blocks as history constraints" time="0.0008619">
+        </testcase>
+        <testcase classname="src/utils/planPins.test.ts" name="pinnedBlocksForReanalysis &gt; keeps the block currently in progress" time="0.0003259">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/planTimeline.test.ts" timestamp="2026-10-08T03:36:18.038Z" hostname="LAPTOP-R9CSS5DH" tests="5" failures="0" errors="0" skipped="0" time="0.008879">
+        <testcase classname="src/utils/planTimeline.test.ts" name="buildPlanTimeline &gt; merges LMS events and PaceWise blocks in chronological order" time="0.0043083">
+        </testcase>
+        <testcase classname="src/utils/planTimeline.test.ts" name="buildPlanTimeline &gt; deduplicates LMS items copied into multiple course snapshots" time="0.0013177">
+        </testcase>
+        <testcase classname="src/utils/planTimeline.test.ts" name="buildPlanTimeline &gt; shows assignments as deadline markers and excludes items outside the week" time="0.000515">
+        </testcase>
+        <testcase classname="src/utils/planTimeline.test.ts" name="buildPlanTimeline &gt; uses the milestone title for a PaceWise study block" time="0.0004258">
+        </testcase>
+        <testcase classname="src/utils/planTimeline.test.ts" name="buildPlanTimeline &gt; includes personal busy time as a hard-constraint calendar item" time="0.0009083">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/progress.test.ts" timestamp="2026-10-08T03:36:18.039Z" hostname="LAPTOP-R9CSS5DH" tests="8" failures="0" errors="0" skipped="0" time="0.0076278">
+        <testcase classname="src/utils/progress.test.ts" name="detectDrift &gt; warns before the deadline when future blocks do not cover remaining work" time="0.0026134">
+        </testcase>
+        <testcase classname="src/utils/progress.test.ts" name="detectDrift &gt; detects a missed study block as progress drift" time="0.0003846">
+        </testcase>
+        <testcase classname="src/utils/progress.test.ts" name="detectDrift &gt; does not warn when future blocks fully cover remaining work" time="0.0010696">
+        </testcase>
+        <testcase classname="src/utils/progress.test.ts" name="detectDrift &gt; does not count a study block covered by new busy time as usable capacity" time="0.0004821">
+        </testcase>
+        <testcase classname="src/utils/progress.test.ts" name="detectDrift &gt; flags an unplanned near deadline but ignores an unplanned distant task" time="0.0003426">
+        </testcase>
+        <testcase classname="src/utils/progress.test.ts" name="detectDrift &gt; warns about cumulative capacity before a plan exists" time="0.0005602">
+        </testcase>
+        <testcase classname="src/utils/progress.test.ts" name="weekStats &gt; counts only activity inside the requested Monday-Sunday week" time="0.0005553">
+        </testcase>
+        <testcase classname="src/utils/progress.test.ts" name="weekStats &gt; uses the saved plan week when no explicit week is provided" time="0.0002596">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/reflectionActivities.test.ts" timestamp="2026-10-08T03:36:18.043Z" hostname="LAPTOP-R9CSS5DH" tests="8" failures="0" errors="0" skipped="0" time="0.0075977">
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="buildReflectionActivities &gt; combines completed Do blocks and ended LMS learning events across courses" time="0.0036047">
+        </testcase>
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="buildReflectionActivities &gt; includes an ended untracked study block as a missed reflection milestone" time="0.0011752">
+        </testcase>
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="buildReflectionActivities &gt; makes a completed Do session reflectable even before its reserved block ends" time="0.0003324">
+        </testcase>
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="reflectionActivityWindow &gt; uses the current demo week for an explicit post-session reflection during Monday grace" time="0.0002822">
+        </testcase>
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="reflectionActivityWindow &gt; keeps the weekly window when no activity is requested" time="0.0002904">
+        </testcase>
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="reflectionNeedsPlanReview &gt; keeps an on-track completed session without creating another draft" time="0.0002164">
+        </testcase>
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="reflectionNeedsPlanReview &gt; requests a plan proposal when the activity is incomplete or blocked" time="0.0002017">
+        </testcase>
+        <testcase classname="src/utils/reflectionActivities.test.ts" name="reflectionNeedsPlanReview &gt; always reviews the next plan after weekly reflection" time="0.000132">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/reminders.test.ts" timestamp="2026-10-08T03:36:18.047Z" hostname="LAPTOP-R9CSS5DH" tests="12" failures="0" errors="0" skipped="0" time="0.0177686">
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; raises the conditional 72-hour reminder when work has not started" time="0.0073531">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; does not raise the 72-hour reminder when progress started and future blocks cover remaining work" time="0.0010066">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; creates study-block and missed-block reminders from the confirmed plan" time="0.0013529">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; maps LMS class_session events to online_class reminders" time="0.0012483">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; maps LMS quiz events to quiz reminders" time="0.0005666">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; maps LMS midterm events to exam_24h reminders" time="0.0006215">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; maps LMS midterm events to exam_60m reminders" time="0.000551">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; maps LMS final_exam events to exam_24h reminders" time="0.0006035">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; maps LMS final_exam events to exam_60m reminders" time="0.0008026">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; turns schedule-changing LMS impacts into an immediate Recover reminder" time="0.0005133">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; stops at three browser deliveries per local day and never hides in-app reminders" time="0.0014337">
+        </testcase>
+        <testcase classname="src/utils/reminders.test.ts" name="deterministic reminders &gt; does not remind after LMS has recorded a submission" time="0.0003152">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/routine.test.ts" timestamp="2026-10-08T03:36:18.050Z" hostname="LAPTOP-R9CSS5DH" tests="3" failures="0" errors="0" skipped="0" time="0.0058644">
+        <testcase classname="src/utils/routine.test.ts" name="routine constraints &gt; supports a learner who sleeps after midnight" time="0.0032832">
+        </testcase>
+        <testcase classname="src/utils/routine.test.ts" name="routine constraints &gt; splits a conventional sleep window around midnight" time="0.0008235">
+        </testcase>
+        <testcase classname="src/utils/routine.test.ts" name="routine constraints &gt; opens a full-day availability envelope when routine mode is enabled" time="0.0005901">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/studyBlockAccess.test.ts" timestamp="2026-10-08T03:36:18.051Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.0036353">
+        <testcase classname="src/utils/studyBlockAccess.test.ts" name="studyBlockAccess &gt; allows a confirmed block to open before its planned start for demos" time="0.0020209">
+        </testcase>
+        <testcase classname="src/utils/studyBlockAccess.test.ts" name="studyBlockAccess &gt; keeps access during the block and closes it when the block ends" time="0.0003169">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/utils/weeklyReflection.test.ts" timestamp="2026-10-08T03:36:18.052Z" hostname="LAPTOP-R9CSS5DH" tests="4" failures="0" errors="0" skipped="0" time="0.0051438">
+        <testcase classname="src/utils/weeklyReflection.test.ts" name="weeklyReflectionCycle &gt; uses a fixed Monday to Sunday period" time="0.0025373">
+        </testcase>
+        <testcase classname="src/utils/weeklyReflection.test.ts" name="weeklyReflectionCycle &gt; opens Sunday at 20:00 by default" time="0.0005888">
+        </testcase>
+        <testcase classname="src/utils/weeklyReflection.test.ts" name="weeklyReflectionCycle &gt; waits for the final Sunday study block" time="0.0004772">
+        </testcase>
+        <testcase classname="src/utils/weeklyReflection.test.ts" name="weeklyReflectionCycle &gt; keeps the previous week open until Monday 09:00" time="0.0003609">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/AdaptiveDoCheckpoint.test.tsx" timestamp="2026-10-08T03:36:18.053Z" hostname="LAPTOP-R9CSS5DH" tests="4" failures="0" errors="0" skipped="0" time="0.2846463">
+        <testcase classname="src/components/domain/AdaptiveDoCheckpoint.test.tsx" name="Adaptive Do checkpoint &gt; shows next approved question and grounded diagnostic rubric" time="0.1447296">
+        </testcase>
+        <testcase classname="src/components/domain/AdaptiveDoCheckpoint.test.tsx" name="Adaptive Do checkpoint &gt; reuses retry key after network failure and takes hint count from server" time="0.0595781">
+        </testcase>
+        <testcase classname="src/components/domain/AdaptiveDoCheckpoint.test.tsx" name="Adaptive Do checkpoint &gt; reports missing approved coverage and disables answer rather than fabricating a pass" time="0.0201275">
+        </testcase>
+        <testcase classname="src/components/domain/AdaptiveDoCheckpoint.test.tsx" name="Adaptive Do checkpoint &gt; opens a due probe inside Do, without adding a phase" time="0.0587955">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/CombinedSchedule.test.tsx" timestamp="2026-10-08T03:36:18.054Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.1376338">
+        <testcase classname="src/components/domain/CombinedSchedule.test.tsx" name="CombinedSchedule &gt; keeps the agenda compact and lets the learner open another day" time="0.1278273">
+        </testcase>
+        <testcase classname="src/components/domain/CombinedSchedule.test.tsx" name="CombinedSchedule &gt; keeps filters behind an optional details control" time="0.0086035">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/DoSessionSupport.test.tsx" timestamp="2026-10-08T03:36:18.055Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.1739987">
+        <testcase classname="src/components/domain/DoSessionSupport.test.tsx" name="DoSessionSupport &gt; shows grounded session resources and an embedded question form" time="0.10649">
+        </testcase>
+        <testcase classname="src/components/domain/DoSessionSupport.test.tsx" name="DoSessionSupport &gt; embeds an approved assessment checkpoint inside Do" time="0.0662642">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/PersonalScheduleDialogs.test.tsx" timestamp="2026-10-08T03:36:18.056Z" hostname="LAPTOP-R9CSS5DH" tests="2" failures="0" errors="0" skipped="0" time="0.1423234">
+        <testcase classname="src/components/domain/PersonalScheduleDialogs.test.tsx" name="personal calendar dialogs &gt; prefills date and exact times when editing a personal activity" time="0.1203892">
+        </testcase>
+        <testcase classname="src/components/domain/PersonalScheduleDialogs.test.tsx" name="personal calendar dialogs &gt; shows an explanation for LMS items without editable date or time fields" time="0.0204637">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/PlanCalendarBoard.test.tsx" timestamp="2026-10-08T03:36:18.057Z" hostname="LAPTOP-R9CSS5DH" tests="6" failures="0" errors="0" skipped="0" time="0.4669126">
+        <testcase classname="src/components/domain/PlanCalendarBoard.test.tsx" name="PlanCalendarBoard &gt; presents read-only LMS task selection and the positioned study block" time="0.2854251">
+        </testcase>
+        <testcase classname="src/components/domain/PlanCalendarBoard.test.tsx" name="PlanCalendarBoard &gt; places overlapping items in separate horizontal lanes" time="0.0007246">
+        </testcase>
+        <testcase classname="src/components/domain/PlanCalendarBoard.test.tsx" name="PlanCalendarBoard &gt; keeps preferred self-study windows behind study blocks" time="0.0013882">
+        </testcase>
+        <testcase classname="src/components/domain/PlanCalendarBoard.test.tsx" name="PlanCalendarBoard &gt; allows an editable personal activity to start dragging without a prior click" time="0.1037189">
+        </testcase>
+        <testcase classname="src/components/domain/PlanCalendarBoard.test.tsx" name="PlanCalendarBoard &gt; does not create extra lanes for adjacent short blocks" time="0.0007975">
+        </testcase>
+        <testcase classname="src/components/domain/PlanCalendarBoard.test.tsx" name="PlanCalendarBoard &gt; keeps a legacy zero-duration block readable and expands it when selected" time="0.073394">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/PlanMonthBoard.test.tsx" timestamp="2026-10-08T03:36:18.058Z" hostname="LAPTOP-R9CSS5DH" tests="1" failures="0" errors="0" skipped="0" time="0.1126255">
+        <testcase classname="src/components/domain/PlanMonthBoard.test.tsx" name="PlanMonthBoard &gt; summarizes events and opens the selected day in week view" time="0.1109366">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/StudyBlockDialog.test.tsx" timestamp="2026-10-08T03:36:18.058Z" hostname="LAPTOP-R9CSS5DH" tests="1" failures="0" errors="0" skipped="0" time="0.1319427">
+        <testcase classname="src/components/domain/StudyBlockDialog.test.tsx" name="StudyBlockDialog &gt; accepts exact minute values and reports the resulting duration" time="0.1308533">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/components/domain/ThemeToggle.test.tsx" timestamp="2026-10-08T03:36:18.059Z" hostname="LAPTOP-R9CSS5DH" tests="1" failures="0" errors="0" skipped="0" time="0.0891258">
+        <testcase classname="src/components/domain/ThemeToggle.test.tsx" name="ThemeToggle &gt; switches the global theme and persists the preference" time="0.0880055">
+        </testcase>
+    </testsuite>
+</testsuites>

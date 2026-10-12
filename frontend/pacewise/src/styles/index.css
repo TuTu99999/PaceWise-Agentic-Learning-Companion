@@ -1,0 +1,223 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --pw-surface: 255 255 255;
+  --pw-canvas: 248 250 252;
+  --pw-ink: 31 41 55;
+  --pw-muted: 100 116 139;
+  --pw-line: 231 236 243;
+  --pw-primary-light: 238 244 255;
+  --pw-primary-ink: 52 97 214;
+  --pw-today-column: 245 247 255;
+  --pw-today-header: 231 237 255;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --pw-surface: 17 24 39;
+  --pw-canvas: 10 15 27;
+  --pw-ink: 241 245 249;
+  --pw-muted: 148 163 184;
+  --pw-line: 51 65 85;
+  --pw-primary-light: 30 45 78;
+  --pw-primary-ink: 147 174 255;
+  --pw-today-column: 21 31 51;
+  --pw-today-header: 30 45 78;
+  color-scheme: dark;
+}
+
+.calendar-today-column { background-color: rgb(var(--pw-today-column)); }
+.calendar-today-header { background-color: rgb(var(--pw-today-header)); box-shadow: inset 0 3px 0 rgb(var(--pw-primary-ink)); }
+.calendar-today-badge { display: inline-block; border-radius: 999px; padding: 0 7px; margin-top: 2px; background-color: rgb(var(--pw-primary-ink)); color: rgb(var(--pw-surface)); font-size: 10px; font-weight: 700; }
+:root[data-theme='dark'] [data-calendar-source='pacewise'] { background-color: #1e315d; color: #c5d3ff; border-color: #3b5280; border-left-color: #809cff; }
+:root[data-theme='dark'] [data-calendar-source='lms'] { background-color: #263244; color: #e2e8f0; border-color: #45556e; border-left-color: #94a3b8; }
+:root[data-theme='dark'] [data-calendar-source='busy'] { background-color: #3b2c17; color: #fde0a1; border-color: #69502c; border-left-color: #e8a426; }
+:root[data-theme='dark'] [data-calendar-source='preferred'] { background-color: #173629; color: #b0e2c3; border-color: #386b4d; }
+
+:root[data-theme='dark'] .text-slate-600,
+:root[data-theme='dark'] .text-slate-500 {
+  color: rgb(148 163 184) !important;
+}
+
+:root[data-theme='dark'] .bg-slate-50,
+:root[data-theme='dark'] .bg-slate-100 {
+  background-color: rgb(30 41 59) !important;
+}
+
+:root[data-theme='dark'] input,
+:root[data-theme='dark'] select,
+:root[data-theme='dark'] textarea {
+  background-color: rgb(var(--pw-surface));
+  color: rgb(var(--pw-ink));
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  h1, h2, h3, h4 {
+    @apply text-ink;
+    line-height: 1.3;
+  }
+  :focus-visible {
+    outline: 3px solid #3461D6;
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  input, select, textarea, button {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .page {
+    @apply mx-auto w-full max-w-6xl px-4 pb-28 pt-5 sm:px-6 lg:px-10 lg:pb-12 lg:pt-8;
+  }
+  .card-title {
+    @apply text-base font-semibold text-ink sm:text-lg;
+  }
+  .caption {
+    @apply text-caption text-muted;
+  }
+  .link {
+    @apply font-semibold text-primary-ink underline-offset-4 hover:underline;
+  }
+  .chat-markdown { @apply leading-relaxed break-words; }
+  .chat-markdown > :first-child { margin-top: 0; }
+  .chat-markdown > :last-child { margin-bottom: 0; }
+  .chat-markdown p { @apply my-3; }
+  .chat-markdown h1, .chat-markdown h2, .chat-markdown h3, .chat-markdown h4 { @apply mb-2 mt-5 font-semibold; }
+  .chat-markdown ul { @apply my-3 list-disc space-y-1.5 pl-6; }
+  .chat-markdown ol { @apply my-3 list-decimal space-y-1.5 pl-6; }
+  .chat-markdown li > p { @apply my-0; }
+  .chat-markdown blockquote { @apply my-4 border-l-4 border-primary/30 bg-primary-light px-4 py-2 text-muted; }
+  .chat-markdown pre { @apply my-4 max-w-full overflow-x-auto rounded-xl bg-slate-100 p-4 text-sm; }
+  .chat-markdown table { @apply my-4 block max-w-full overflow-x-auto border-collapse text-sm; }
+  .chat-markdown th, .chat-markdown td { @apply border border-line px-3 py-2 text-left align-top; }
+  .chat-markdown th { @apply bg-canvas font-semibold; }
+  .chat-markdown .katex-display { @apply my-4 overflow-x-auto overflow-y-hidden py-1; }
+
+  /* Keep dense planner surfaces clean while preserving mouse and keyboard scrolling. */
+  .auto-hide-scrollbar {
+    scrollbar-width: none;
+  }
+  .auto-hide-scrollbar:hover,
+  .auto-hide-scrollbar:focus-within {
+    scrollbar-color: #94A3B8 transparent;
+    scrollbar-width: thin;
+  }
+  .auto-hide-scrollbar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+  .auto-hide-scrollbar:hover::-webkit-scrollbar,
+  .auto-hide-scrollbar:focus-within::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .auto-hide-scrollbar::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: #94A3B8;
+    background-clip: padding-box;
+  }
+}
+
+/* Calendar adapts to its own available space, not only the browser width. */
+.calendar-board { container: calendar-layout / inline-size; }
+.calendar-input-panel { display: none; }
+.calendar-panel-actions { display: flex; }
+@container calendar-layout (min-width: 1400px) {
+  .calendar-input-panel { display: flex; }
+  .calendar-panel-actions { display: none; }
+}
+
+.app-shell {
+  --mobile-nav-height: calc(68px + env(safe-area-inset-bottom, 0px));
+  /* Clip incidental sideways overflow without creating a scroll ancestor for
+     the sticky sidebar or changing any vertical scroll behavior. */
+  overflow-x: clip;
+}
+.mobile-bottom-nav { height: var(--mobile-nav-height); }
+.calendar-page { height: calc(100dvh - 4rem); padding-bottom: var(--mobile-nav-height, 68px); min-width: 0; overflow-x: hidden; }
+.learning-page { height: calc(100dvh - 7.5rem - var(--mobile-nav-height, 68px)); }
+.calendar-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 8px; }
+.calendar-toolbar-dates, .calendar-toolbar-actions { grid-column: 1 / -1; }
+.calendar-toolbar-dates input { width: 0; min-width: 0; flex: 1; }
+.calendar-toolbar-actions > button { flex: 1 1 auto; max-width: 100%; white-space: normal; }
+.calendar-toolbar-actions > .teacher-lesson-manager-trigger { flex: 0 0 auto; width: auto; white-space: nowrap; }
+.calendar-toolbar-views button { min-height: 44px; padding-inline: 8px; }
+.calendar-toolbar-dates input, .calendar-toolbar-dates button { min-height: 44px; }
+.calendar-status { max-height: 96px; overflow-y: auto; overflow-wrap: anywhere; }
+/* Selection/hover layers stay inside the calendar, below toolbar popovers.
+   Modals use a body portal and remain independent of this stacking context. */
+.calendar-board-frame { position: relative; isolation: isolate; z-index: 0; }
+.calendar-timeline-scroll { overflow-x: hidden; touch-action: pan-y pinch-zoom; -webkit-overflow-scrolling: touch; }
+@media (pointer: coarse) {
+  .calendar-resize-handle { display: none; }
+}
+
+@media (min-width: 640px) {
+  .calendar-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .calendar-toolbar-title { margin-right: 8px; }
+  .calendar-toolbar-dates input { width: 142px; flex: none; }
+  .calendar-toolbar-actions { margin-left: auto; }
+  .calendar-toolbar-views button { min-height: 36px; padding-inline: 12px; }
+  .calendar-panel-actions > button { flex: none; padding-inline: 16px; }
+}
+@media (min-width: 1024px) {
+  .calendar-page { height: 100dvh; padding-bottom: 0; }
+  .learning-page { height: calc(100dvh - 3.5rem); }
+}
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .app-sidebar:not(.icon-only) { width: 72px; padding-inline: 8px; }
+  .app-sidebar:not(.icon-only) .sidebar-expanded { display: none; }
+  .app-sidebar:not(.icon-only) nav a,
+  .app-sidebar:not(.icon-only) > div:last-child button { justify-content: center; padding-inline: 0; position: relative; }
+  .app-sidebar:not(.icon-only) > div:first-child > span { justify-content: center; }
+  .app-sidebar:not(.icon-only) > div:first-child > span > span:last-child { display: none; }
+  .app-sidebar:not(.icon-only) > div:first-child { padding-inline: 0; }
+  .app-sidebar:not(.icon-only) nav a > span:not(.sidebar-expanded) { position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; font-size: 10px; }
+}
+@media (max-width: 639px) {
+  .student-calendar-page .calendar-toolbar-dates > button[title='Hôm nay'] { width: auto; min-width: 64px; padding-inline: 8px; }
+  .student-calendar-page .calendar-toolbar-actions > button { flex: none; }
+  .student-calendar-page .calendar-toolbar-actions > button:last-child { flex: 1; }
+  input:not([type='checkbox']):not([type='radio']), select, textarea { font-size: 16px !important; max-width: 100%; min-width: 0; }
+  .page { padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px)); }
+  .calendar-toolbar-title h1 { font-size: 16px; }
+  .calendar-toolbar-title p { font-size: 10px; }
+  .calendar-toolbar-dates > button { width: 44px; flex: none; padding-inline: 0; }
+  .calendar-course-filter { flex-basis: 100%; }
+  .reminder-popover { position: fixed; left: 12px; right: 12px; top: 76px; width: auto; max-height: calc(100dvh - 164px); overflow-y: auto; }
+}
+/* Short windows use ONE scroll surface. A fixed 440px board inside a clipped
+   page made its final hours unreachable even when its inner scroll hit bottom. */
+@media (max-height: 600px) {
+  .calendar-page { height: calc(100dvh - 4rem - var(--mobile-nav-height, 68px)); padding-bottom: 0; overflow-y: auto; }
+  .calendar-board-frame { flex: none; height: auto; min-height: 0; }
+  .calendar-board { height: auto; overflow: clip; }
+  .calendar-timeline-section, .calendar-timeline-content { height: auto; }
+  /* clip + visible keeps this non-scrolling: the short-window page must remain
+     the only vertical scroll surface. hidden + visible would compute to auto. */
+  .calendar-timeline-scroll { flex: none; overflow-x: clip; overflow-y: visible; overscroll-behavior: auto; }
+  .calendar-timeline-header { position: sticky; top: 0; }
+}
+@media (max-height: 600px) and (min-width: 1024px) {
+  .calendar-page { height: 100dvh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

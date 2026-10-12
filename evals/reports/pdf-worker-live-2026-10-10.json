@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "pdf_bytes": 6292144,
+  "real_pdf_extraction": true,
+  "real_subprocess_embedding_qdrant": true,
+  "unchanged_content_reuses_vectors": true,
+  "qa_vectors_removed": true,
+  "no_course_or_history_writes": true
+}
