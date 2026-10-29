@@ -115,7 +115,12 @@ def _safe_classifier_fallback(query: str) -> tuple[str, str]:
     normalized = normalize_text(query)
     if any(signal in normalized for signal in INJECTION_REVIEW_SIGNALS):
         return "block", "semantic_classifier_unavailable_injection_signal"
-    return "guided_help", "semantic_classifier_unavailable_guided_help"
+    if any(signal in normalized for signal in ACADEMIC_REVIEW_SIGNALS):
+        return "guided_help", "semantic_classifier_unavailable_academic_signal"
+    # ``semantic_mode=all`` sends even harmless definition and hint requests to
+    # the optional classifier. An outage must not turn those requests into an
+    # academic-integrity violation after the deterministic layer allowed them.
+    return "allow", "semantic_classifier_unavailable_no_risk_signal"
 
 
 def _parse_classifier_response(content: str) -> dict[str, Any] | None:

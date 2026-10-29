@@ -46,6 +46,21 @@ def test_classifier_outage_degrades_to_guided_help():
     assert result["classifier_status"] == "unavailable"
 
 
+def test_classifier_outage_keeps_low_risk_learning_requests_allowed():
+    def unavailable(**_kwargs):
+        raise RuntimeError("classifier offline")
+
+    for query in ("SQL viết tắt là gì?", "Cho mình gợi ý"):
+        result = evaluate_input_policy(
+            query,
+            classifier_factory=unavailable,
+            semantic_mode="all",
+        )
+        assert result["action"] == "allow"
+        assert result["classifier_status"] == "unavailable"
+        assert result["reason"] == "semantic_classifier_unavailable_no_risk_signal"
+
+
 def test_classifier_outage_blocks_explicit_bypass_signal():
     def unavailable(**_kwargs):
         raise RuntimeError("classifier offline")

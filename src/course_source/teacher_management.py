@@ -371,6 +371,79 @@ def map_chapter(db, course_id, chapter, item_type, item_id, title):
     db.add(ModuleItem(module_id=module.id, item_type=item_type, content_id=item_id, title=title, published=True))
 
 
+def remove_resource_references(db, course_id: int, resource_id: int) -> None:
+    """Unlink a file everywhere before deleting it from the authoritative source."""
+    module_items = db.scalars(
+        select(ModuleItem)
+        .join(CourseModule)
+        .where(
+            CourseModule.course_id == course_id,
+            ModuleItem.item_type == "resource",
+            ModuleItem.content_id == resource_id,
+        )
+    ).all()
+    for item in module_items:
+        db.delete(item)
+
+    task_metadata = db.scalars(
+        select(TeacherTaskMetadata)
+        .join(Assignment, Assignment.id == TeacherTaskMetadata.assignment_id)
+        .where(Assignment.course_id == course_id)
+    ).all()
+    for metadata in task_metadata:
+        try:
+            identifiers = json.loads(metadata.resource_ids_json or "[]")
+        except (TypeError, ValueError):
+            identifiers = []
+        filtered = [identifier for identifier in identifiers if identifier != resource_id]
+        if filtered != identifiers:
+            metadata.resource_ids_json = json.dumps(filtered)
+
+    events = db.scalars(select(CalendarEvent).where(CalendarEvent.course_id == course_id)).all()
+    for event in events:
+        metadata = lesson_metadata(event)
+        identifiers = metadata.get("resource_ids")
+        if not isinstance(identifiers, list) or resource_id not in identifiers:
+            continue
+        metadata["resource_ids"] = [identifier for identifier in identifiers if identifier != resource_id]
+        event.description = "course-activity-v1; " + json.dumps(metadata)
+
+
+@router.delete("/courses/{course_id}/resources/{resource_id}")
+def delete_resource(course_id: int, resource_id: int, user_id: int, db: Session = Depends(get_db)):
+    teacher(db, course_id, user_id)
+    resource = db.get(Resource, resource_id, with_for_update=True)
+    if not resource or resource.course_id != course_id:
+        raise HTTPException(404, "Không tìm thấy tài liệu.")
+
+    source_url = resource.source_url
+    shared_source = bool(
+        db.scalar(
+            select(Resource.id)
+            .where(Resource.id != resource_id, Resource.source_url == source_url)
+            .limit(1)
+        )
+    )
+    remove_resource_references(db, course_id, resource_id)
+    record_change(
+        db,
+        actor_user_id=user_id,
+        action="resource.deleted",
+        entity_type="resource",
+        entity_id=resource.id,
+        course_id=course_id,
+    )
+    db.delete(resource)
+    db.commit()
+    return {
+        "status": "deleted",
+        # The authenticated facade consumes these fields to clean up PaceWise-owned
+        # storage. They are never returned to the browser.
+        "source_url": source_url,
+        "delete_stored_object": not shared_source,
+    }
+
+
 def save_task(db, course_id, user_id, payload, item=None, *, commit=True):
     current = None
     if item:
@@ -681,9 +754,9 @@ def cancel_lesson(course_id: int, lesson_id: int, payload: VersionInput, user_id
 
 @router.get("/profile")
 def read_profile(user_id: int, db: Session = Depends(get_db)):
-    if not db.scalar(select(Enrollment.id).where(Enrollment.user_id == user_id, Enrollment.role == "instructor")):
-        raise HTTPException(403, "Instructor enrollment required")
     user = db.get(User, user_id)
+    if not user or user.role != "instructor":
+        raise HTTPException(403, "Instructor account required")
     profile = db.get(TeacherProfile, user_id)
     details = json.loads(profile.profile_json) if profile else ProfileInput().model_dump(exclude={"expected_version"})
     return {"name": user.full_name, "email": user.email, "details": details, "version": revision(details)}

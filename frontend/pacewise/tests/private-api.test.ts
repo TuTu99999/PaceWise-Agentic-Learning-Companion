@@ -53,4 +53,45 @@ describe('encrypted API transport', () => {
     const { encryptedFetch } = await import('../src/services/privateApi');
     await expect(encryptedFetch('/api/v1', '/auth/me')).rejects.toThrow('Unencrypted API response rejected');
   });
+
+  it('refreshes a stale server key once after a backend restart', async () => {
+    const staleServer = await webcrypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+    const currentServer = await webcrypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+    const stalePublicKey = b64(await webcrypto.subtle.exportKey('raw', staleServer.publicKey));
+    const currentPublicKey = b64(await webcrypto.subtle.exportKey('raw', currentServer.publicKey));
+    let configRequests = 0;
+    let dispatchRequests = 0;
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith('/private/config')) {
+        configRequests += 1;
+        return new Response(JSON.stringify({ publicKey: configRequests === 1 ? stalePublicKey : currentPublicKey }));
+      }
+      dispatchRequests += 1;
+      if (dispatchRequests === 1) {
+        return new Response(JSON.stringify({ detail: 'Invalid encrypted request' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const packet = JSON.parse(String(options?.body));
+      const client = await webcrypto.subtle.importKey('raw', raw(packet.publicKey), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+      const shared = await webcrypto.subtle.deriveBits({ name: 'ECDH', public: client }, currentServer.privateKey, 256);
+      const material = await webcrypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+      const key = await webcrypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: raw(packet.salt), info }, material,
+        { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      const nonce = webcrypto.getRandomValues(new Uint8Array(12));
+      const aad = Buffer.concat([Buffer.from('pacewise-private-api-v1:response:'), Buffer.from(raw(packet.nonce)), Buffer.from('200')]);
+      const cipher = await webcrypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: aad }, key,
+        encoder.encode(JSON.stringify({ type: 'json', body: { configured: true }, headers: {} })));
+      return new Response(JSON.stringify({ version: 1, nonce: b64(nonce), ciphertext: b64(cipher) }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { encryptedFetch } = await import('../src/services/privateApi');
+
+    const result = await encryptedFetch('/api/v1', '/auth/google/status');
+
+    expect(await result.json()).toEqual({ configured: true });
+    expect(configRequests).toBe(2);
+    expect(dispatchRequests).toBe(2);
+  });
 });

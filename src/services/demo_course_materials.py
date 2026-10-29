@@ -50,11 +50,13 @@ class ExerciseCatalogEntry:
 
 
 # Only student-facing briefs belong here.  Teacher answer keys are deliberately
-# excluded from the student RAG index.  OOPCPP201 is also excluded because the
-# available file is labelled as OOP but contains embedded-systems exercises.
+# excluded from the student RAG index.  The legacy OOPCPP201 Word file is also
+# excluded because it contains embedded-systems exercises; the replacement
+# below is a public, answer-free assignment brief built for this course.
 EXERCISE_CATALOG: tuple[ExerciseCatalogEntry, ...] = (
     ExerciseCatalogEntry("DB201", "information-systems-analysis-design/course/database_systems/exercises/Co_So_Du_Lieu.docx"),
     ExerciseCatalogEntry("DSA201", "data_structures_and_algorithms/exercises/Cau_Truc_Du_Lieu_Va_Giai_Thuat.docx"),
+    ExerciseCatalogEntry("OOPCPP201", "object_oriented_programming/exercises/Bai_tap_Cpp_theo_chuong.docx"),
     ExerciseCatalogEntry("WEB201", "web-application-development/exercises/bai_tap_theo_buoi.docx"),
     ExerciseCatalogEntry("RTOS301", "embedded-real-time-operating-systems/exercises/bai_tap_theo_buoi.docx"),
     ExerciseCatalogEntry("ISAD301", "information-systems-analysis-design/exercises/bai_tap_theo_buoi.docx"),
@@ -270,6 +272,12 @@ def _exercise_sections(path: Path) -> list[dict]:
 
 def matching_exercise_sections(module_name: str, sections: list[dict]) -> list[dict]:
     query = _keywords(module_name)
+    chapter = re.search(r"chương\s+(\d+)", module_name, flags=re.IGNORECASE)
+    # Broad labels such as "phụ thuộc" or "mô hình" are not enough when the
+    # chapter also names a specific subtype. Requiring more of a long query
+    # prevents "phụ thuộc đa trị" from being mapped to an unrelated
+    # "phụ thuộc hàm" exercise merely because both share two generic words.
+    minimum_title_score = 0.50 if len(query) >= 4 else 0.30
     ranked: list[tuple[float, dict]] = []
     title_matches: list[dict] = []
     title_scores: dict[int, float] = {}
@@ -280,29 +288,35 @@ def matching_exercise_sections(module_name: str, sections: list[dict]) -> list[d
         body_score = len(query & body_tokens) / max(1, len(query))
         score = title_score + 0.15 * body_score
         title_scores[section["number"]] = title_score
-        if score >= 0.16:
+        if title_score >= minimum_title_score or (title_score >= 0.20 and score >= minimum_title_score):
             ranked.append((score, section))
-        if query & title_tokens:
+        if title_score >= minimum_title_score:
             title_matches.append(section)
+    # The imported schedule is authoritative about the chapter number.  A
+    # shared exercise book often repeats broad words such as "mô hình" in
+    # adjacent chapters; expanding that lexical match used to attach questions
+    # from chapters 3-4 to a chapter-2 assignment.  Prefer the numbered section
+    # whenever it is at least a plausible title match, then use fuzzy ranges
+    # only for modules without a usable chapter number.
+    if chapter:
+        number = int(chapter.group(1))
+        exact = next((item for item in sections if item["number"] == number), None)
+        best_title_score = max(title_scores.values(), default=0.0)
+        if exact and title_scores.get(number, 0.0) >= max(minimum_title_score, best_title_score * 0.70):
+            return [exact]
     if len(title_matches) >= 2:
         first = min(item["number"] for item in title_matches)
         last = max(item["number"] for item in title_matches)
         if last - first <= 3:
             return [item for item in sections if first <= item["number"] <= last]
     ranked.sort(key=lambda pair: (-pair[0], pair[1]["number"]))
-    chapter = re.search(r"chương\s+(\d+)", module_name, flags=re.IGNORECASE)
-    if chapter and ranked:
-        number = int(chapter.group(1))
-        exact = next((item for item in sections if item["number"] == number), None)
-        best_title_score = max(title_scores.values(), default=0.0)
-        if exact and title_scores.get(number, 0.0) >= max(0.20, best_title_score * 0.70):
-            return [exact]
     if not ranked:
-        if chapter:
-            fallback = next((item for item in sections if item["number"] == int(chapter.group(1))), None)
-            return [fallback] if fallback else []
+        # A chapter number and an exercise-session number are not universally
+        # equivalent (for example, one SQL chapter may span three sessions).
+        # No semantic match is safer than scheduling the same ordinal section.
+        return []
     best = ranked[0][0] if ranked else 0
-    return [section for score, section in ranked if score >= max(0.16, best * 0.55)][:4]
+    return [section for score, section in ranked if score >= max(minimum_title_score, best * 0.55)][:4]
 
 
 def _copy_once(source: Path, upload_dir: Path, course_id: int, checksum: str) -> tuple[Path, bool]:

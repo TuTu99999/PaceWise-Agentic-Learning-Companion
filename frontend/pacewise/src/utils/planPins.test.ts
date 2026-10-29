@@ -21,18 +21,18 @@ describe('pinnedBlocksForReanalysis', () => {
     expect(result.map((item) => item.id)).toEqual(['student-choice']);
   });
 
-  it('keeps elapsed blocks as history constraints', () => {
+  it('releases elapsed AI blocks when there is no completion evidence', () => {
     const result = pinnedBlocksForReanalysis([
       block('past-day', '2026-10-04', 'agent'),
       { ...block('past-today', '2026-10-05', 'agent'), start: '10:00', end: '11:00' },
       { ...block('future-today', '2026-10-05', 'agent'), start: '13:00', end: '14:00' },
     ], '2026-10-05', '12:00');
 
-    expect(result.map((item) => item.id)).toEqual(['past-day', 'past-today']);
+    expect(result).toEqual([]);
   });
 
-  it('keeps the block currently in progress', () => {
+  it('does not infer that a current block was started from wall-clock time', () => {
     const current = { ...block('current', '2026-10-05', 'agent'), start: '11:30', end: '12:30' };
-    expect(pinnedBlocksForReanalysis([current], '2026-10-05', '12:00')).toEqual([current]);
+    expect(pinnedBlocksForReanalysis([current], '2026-10-05', '12:00')).toEqual([]);
   });
 });

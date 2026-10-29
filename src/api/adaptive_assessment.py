@@ -2,8 +2,10 @@
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +21,7 @@ from src.persistence_models import DelayedAssessmentProbe, InstructorAction, Lea
 from src.security import SessionContext, get_current_session, require_csrf
 from src.services import adaptive_assessment as adaptive
 from src.services.agent_memory import load_learner_memory, persist_agent_outcome
+from src.services.ai_rate_limit import ai_request_slot
 from src.services.assessment_policy import DIMENSION
 from src.services.assessment_review_policy import MAX_VERIFICATION_QUESTIONS, review_decision
 from src.services.learning_evidence import build_evidence_contract
@@ -31,7 +34,11 @@ router = APIRouter(prefix="/do/assessment", tags=["Do checkpoints"])
 class StartRequest(BaseModel):
     course_id: int = Field(gt=0)
     block_id: str = Field(min_length=1, max_length=128)
-    assessment_id: str = Field(pattern=r"^Q-\d+$")
+    assessment_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
     probe_id: str | None = Field(default=None, max_length=64)
     restart: bool = False
 
@@ -40,6 +47,7 @@ class AttemptRequest(BaseModel):
     course_id: int = Field(gt=0)
     event_key: str = Field(min_length=1, max_length=128)
     answer: str = Field(default="", max_length=5000)
+    locale: Literal["vi", "en"] = "vi"
 
 
 def _scope(session: SessionContext, course_id: int) -> SessionContext:
@@ -145,6 +153,7 @@ def _taxonomy(db: Session, course_id: int, kc_id: str) -> list[str]:
 async def submit_answer(
     session_id: str,
     payload: AttemptRequest,
+    request: Request,
     session: SessionContext = Depends(require_csrf),
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
@@ -164,30 +173,39 @@ async def submit_answer(
     if guardrail.get("action") == "block":
         raise HTTPException(status_code=422, detail="Answer contains unsafe instructions")
     memory = load_learner_memory(db, scoped, settings)
-    result = (
-        None
-        if item.get("formative_only")
-        else await run_in_threadpool(
-            understanding_node,
-            {
-                "query": answer,
-                "approved_rubric": item["approved_rubric"],
-                "mastery_profile": memory["mastery"],
-                "misconceptions": memory["misconceptions"],
-                "request": {
-                    "question": item["question"],
-                    "question_type": item["question_type"],
-                    "answer_type": item["answer_type"],
-                    "correct_answer": item["correct_answer"],
-                    "assessment_stage": state["stage"],
-                    "expected_facts": item.get("expected_facts") or {},
-                },
-            },
+    result = None
+    if not item.get("formative_only"):
+        admission = SimpleNamespace(
+            workflow="understanding",
+            context={"assessment_id": item["assessment_id"], "do_block_id": row.block_id},
         )
-    )
+        async with ai_request_slot(admission, request, scoped, settings):
+            result = await run_in_threadpool(
+                understanding_node,
+                {
+                    "query": answer,
+                    "approved_rubric": item["approved_rubric"],
+                    "mastery_profile": memory["mastery"],
+                    "misconceptions": memory["misconceptions"],
+                    "request": {
+                        "question": item["question"],
+                        "question_type": item["question_type"],
+                        "answer_type": item["answer_type"],
+                        "correct_answer": item["correct_answer"],
+                        "assessment_stage": state["stage"],
+                        "expected_facts": item.get("expected_facts") or {},
+                        "locale": payload.locale,
+                        "planning_signal_only": True,
+                    },
+                },
+            )
     if result is None:
         result = {
-            "response": "Đã lưu câu trả lời tham khảo. Câu AI này chưa được xác thực nội dung nên không dùng để nâng mức hiểu; hãy kiểm chứng bằng câu đã duyệt.",
+            "response": (
+                "Your formative answer was saved. This AI-generated question is not verified and cannot raise your understanding level; continue with an approved question."
+                if payload.locale == "en"
+                else "Đã lưu câu trả lời tham khảo. Câu AI này chưa được xác thực nội dung nên không dùng để nâng mức hiểu; hãy kiểm chứng bằng câu đã duyệt."
+            ),
             "status": "completed",
             "assessment_result": {
                 "status": "chưa đủ bằng chứng",
@@ -211,7 +229,12 @@ async def submit_answer(
         )
         db.commit()
         raise HTTPException(
-            status_code=503, detail="AI đánh giá chưa phản hồi. Câu trả lời chưa bị chấm; hãy thử gửi lại."
+            status_code=503,
+            detail=(
+                "The AI assessment service did not respond. Your answer was not graded; please try again."
+                if payload.locale == "en"
+                else "AI đánh giá chưa phản hồi. Câu trả lời chưa bị chấm; hãy thử gửi lại."
+            ),
         )
     assessment = result.get("assessment_result") or {}
     # Only prior accepted, unhinted checkpoints within this exact KC session
@@ -300,16 +323,16 @@ async def submit_answer(
             decision = review_decision(state, result, preview, bank, row.kc_id)
     decision.update(checkpoint_id=row.id, stage=state["stage"])
     result["assessment_review"] = decision
-    # Evidence stays provisional while we verify; only exceptional unresolved
-    # cases create a human review. Provider failures already return retryable 503.
+    # Student answers are planning signals, not instructor review work. Uncertain
+    # evidence is verified with another approved item and otherwise left unknown.
     if decision["status"] != "accepted":
-        result["status"] = "awaiting_teacher"
-        result["_defer_human_review"] = decision["status"] != "pending_review"
-        result["response"] = {
-            "verifying": "Chưa đủ tin cậy để kết luận. Thử một câu khác cùng mức; kế hoạch và phiên học vẫn tiếp tục.",
-            "pending_review": "Kết quả cần giảng viên xem lại. Bạn vẫn có thể tiếp tục học, Reflect và lập kế hoạch.",
-            "abstained": "Chưa có kết quả đánh giá hợp lệ; chưa cập nhật mức hiểu. Bạn vẫn có thể tiếp tục học và Reflect.",
-        }[decision["status"]]
+        result["status"] = "completed"
+        result["_defer_human_review"] = True
+        result["response"] = (
+            "Your answer was recorded as an unconfirmed planning signal."
+            if payload.locale == "en"
+            else "Đã ghi nhận câu trả lời như một tín hiệu kế hoạch chưa xác định."
+        )
     persist_agent_outcome(db, scoped, settings, result, item["assessment_id"], commit=False)
     response = await adaptive.advance(db, scoped, settings, row, state, bank, result, answer, payload.event_key)
     db.commit()

@@ -146,6 +146,31 @@ def test_conflicts_historical_import_foreign_courses_and_duplicate_rows(authorin
     assert preview(client, [different])["errors"]
 
 
+def test_preview_accepts_ongoing_lessons_and_overdue_tasks(authoring):
+    client, factory = authoring
+    now = datetime.now(UTC)
+    ongoing = {
+        "title": "Ongoing lesson",
+        "starts_at": (now - timedelta(minutes=10)).isoformat(),
+        "ends_at": (now + timedelta(minutes=80)).isoformat(),
+    }
+    overdue = {
+        "title": "Historical assignment",
+        "kind": "assignment",
+        "due_at": (now - timedelta(days=1)).isoformat(),
+        "points_possible": 10,
+        "published": True,
+    }
+    draft = preview(client, [row(ongoing), row(overdue, sheet="Tasks")])
+    assert not draft["errors"]
+    assert draft["counts"]["lessons"] == 1
+    assert draft["counts"]["tasks"] == 1
+    assert apply(client, draft).status_code == 200
+    with factory() as db:
+        assert db.scalar(select(CalendarEvent).where(CalendarEvent.title == "Ongoing lesson"))
+        assert db.scalar(select(Assignment).where(Assignment.title == "Historical assignment"))
+
+
 def test_stale_snapshot_blocks_all_changes(authoring):
     client, factory = authoring
     draft = preview(client, [row()])

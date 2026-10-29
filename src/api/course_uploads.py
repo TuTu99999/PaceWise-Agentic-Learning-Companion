@@ -168,6 +168,11 @@ async def upload_ticket(course_id: int, payload: UploadInput,
                                  checksum_sha256=payload.checksum_sha256.lower(),
                                  checksum_sha256_base64=checksum_base64, content_type=content_type,
                                  expires_at=datetime.now(UTC) + timedelta(minutes=15)))
+        # The policy mapper has no ORM relationship to the ticket mapper. On
+        # PostgreSQL SQLAlchemy may therefore flush the child first even though
+        # its Table contains a foreign key. Persist the parent explicitly so a
+        # document role can never fail ticket creation with an FK violation.
+        db.flush()
         db.add(CourseUploadPolicy(ticket_id=ticket_id, content_role=payload.content_role))
         db.commit()
     if settings.course_storage_backend == "s3":

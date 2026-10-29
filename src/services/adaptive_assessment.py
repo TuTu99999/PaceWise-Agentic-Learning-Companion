@@ -16,10 +16,17 @@ from src.config import Settings
 from src.persistence_models import AdaptiveAssessmentSession, AgentReviewCase, DelayedAssessmentProbe, InstructorAction
 from src.security import SessionContext
 from src.services.agent_memory import load_approved_assessment
-from src.services.assessment_policy import DIMENSION, HINTS, item_stage, next_step, question_fingerprint, select_item
+from src.services.assessment_policy import (
+    DIMENSION,
+    HINTS,
+    STAGES,
+    item_stage,
+    next_step,
+    question_fingerprint,
+    select_item,
+)
 from src.services.assessment_review_policy import MAX_VERIFICATION_QUESTIONS
 from src.services.learning_events import audit
-from src.services.lms_client import LMSClient
 from src.services.question_design import generate_candidate, instance_bank
 
 POLICY_VERSION = "adaptive-do-v2"
@@ -33,6 +40,49 @@ def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+def configured_checkpoint_stages(seed: dict, bank: list[dict], kc_id: str) -> list[str]:
+    """Expose only stages that can actually issue a trusted question.
+
+    A teacher-approved generative template can cover every declared stage. A
+    fixed/legacy bank cannot: its sequence must be limited to stages for which
+    an approved item exists, otherwise learners are shown a fake N-step flow
+    that immediately dead-ends on an empty stage.
+    """
+    design = seed.get("question_design") or {}
+    requested = [value for value in design.get("stages", []) if value in STAGES]
+    if design.get("mode") in {"relation_template", "llm_followup"} and requested:
+        return requested
+    available = [
+        stage
+        for stage in STAGES
+        if any(
+            kc_id in item.get("knowledge_component_ids", [])
+            and not item.get("kc_provisional")
+            and item_stage(item) == stage
+            for item in bank
+        )
+    ]
+    if requested:
+        available = [stage for stage in requested if stage in available]
+    return available or [item_stage(seed)]
+
+
+def assessment_set_bank(bank: list[dict], state: dict) -> list[dict]:
+    """Keep a checkpoint inside the teacher-approved question set that started it.
+
+    Legacy assessments have no set id and retain the previous KC-scoped behavior.
+    Generated follow-ups inherit their parent's set id through ``_instance``.
+    """
+    assessment_set_id = str(state.get("assessment_set_id") or "").strip()
+    if not assessment_set_id:
+        return bank
+    return [item for item in bank if item.get("assessment_set_id") == assessment_set_id]
+
+
+def checkpoint_bank(bank: list[dict], state: dict) -> list[dict]:
+    return instance_bank(assessment_set_bank(bank, state), state)
+
+
 async def approved_bank(db: Session, session: SessionContext, settings: Settings) -> list[dict]:
     rows = db.scalars(
         select(InstructorAction)
@@ -42,17 +92,17 @@ async def approved_bank(db: Session, session: SessionContext, settings: Settings
     latest: dict[str, dict] = {}
     for row in rows:
         latest.setdefault(row.entity_id, json.loads(row.payload_json or "{}"))
-    quizzes = await LMSClient(settings).service_get(
-        f"/api/pacewise/v1/courses/{session.course_id}/quizzes", {"include_answers": True}
-    )
+    approved = {
+        identifier: payload
+        for identifier, payload in latest.items()
+        if payload.get("status") == "approved"
+    }
     bank = []
-    for identifier, payload in latest.items():
-        if payload.get("status") != "approved":
-            continue
+    for identifier, payload in approved.items():
         try:
-            bank.append(await load_approved_assessment(db, session, settings, identifier, quizzes))
+            bank.append(await load_approved_assessment(db, session, settings, identifier))
         except HTTPException as exc:
-            if exc.status_code not in {404, 422}:
+            if exc.status_code not in {404, 409, 422}:
                 raise
     return bank
 
@@ -74,16 +124,23 @@ def scoped_checkpoint(db: Session, session: SessionContext, settings: Settings, 
 
 
 def public_state(row: AdaptiveAssessmentSession, state: dict, bank: list[dict]) -> dict:
-    bank = instance_bank(bank, state)
+    bank = checkpoint_bank(bank, state)
     item = next((item for item in bank if item["assessment_id"] == state.get("item_id")), None)
+    configured_stages = [stage for stage in state.get("checkpoint_stages", STAGES) if stage in STAGES]
+    if not configured_stages:
+        configured_stages = list(STAGES)
+    stage_number = configured_stages.index(state["stage"]) + 1 if state["stage"] in configured_stages else 1
     return {
         "session_id": row.id,
         "policy_version": POLICY_VERSION,
         "status": state["status"],
         "stage": state["stage"],
+        "stage_number": stage_number,
+        "stage_total": len(configured_stages),
         "reason": state.get("reason", ""),
         "kc_id": row.kc_id,
         "mode": row.mode,
+        "assessment_set_id": state.get("assessment_set_id"),
         "hint_level": state.get("hint_level", 0),
         "probe_id": state.get("probe_id"),
         "hint": state.get("hint", ""),
@@ -127,7 +184,7 @@ def audit_question(
     bank: list[dict],
 ) -> None:
     """Keep the displayed question even if it is never answered or its parent changes."""
-    item = next((value for value in instance_bank(bank, state) if value["assessment_id"] == state.get("item_id")), None)
+    item = next((value for value in checkpoint_bank(bank, state) if value["assessment_id"] == state.get("item_id")), None)
     if not item:
         return
     audit(
@@ -151,6 +208,7 @@ def audit_question(
 
 
 async def assign(state: dict, bank: list[dict], kc_id: str) -> None:
+    bank = assessment_set_bank(bank, state)
     item = state.pop("_next_candidate", None) or await run_in_threadpool(
         generate_candidate, state, bank, kc_id, state.get("checkpoint_seed", kc_id)
     )
@@ -160,7 +218,23 @@ async def assign(state: dict, bank: list[dict], kc_id: str) -> None:
         candidates = instance_bank(bank, state)
         if state.get("force_anchor"):
             candidates = [value for value in candidates if not value.get("formative_only")]
-        item = select_item(candidates, kc_id, state["stage"], state.get("used", []), state.get("seen_questions", []))
+        preferred_id = state.get("preferred_item_id")
+        preferred = [value for value in candidates if value.get("assessment_id") == preferred_id]
+        item = select_item(
+            preferred,
+            kc_id,
+            state["stage"],
+            state.get("used", []),
+            state.get("seen_questions", []),
+        )
+        if not item:
+            item = select_item(
+                candidates,
+                kc_id,
+                state["stage"],
+                state.get("used", []),
+                state.get("seen_questions", []),
+            )
     state.pop("force_anchor", None)
     if not item:
         state.update(status="coverage_gap", reason="no_approved_item", item_id=None, coverage_gap=state["stage"])
@@ -176,7 +250,7 @@ async def assign(state: dict, bank: list[dict], kc_id: str) -> None:
 
 
 def current_item(state: dict, bank: list[dict]) -> dict:
-    bank = instance_bank(bank, state)
+    bank = checkpoint_bank(bank, state)
     item = next((item for item in bank if item["assessment_id"] == state.get("item_id")), None)
     if not item or item["rubric_version"] != state.get("item_version"):
         raise HTTPException(status_code=409, detail="Question approval/rubric changed; restart checkpoint")
@@ -214,6 +288,13 @@ async def start(
     if not seed or seed.get("kc_provisional") or not seed.get("knowledge_component_ids"):
         raise HTTPException(status_code=409, detail="Checkpoint requires an approved mapped assessment")
     kc_id = seed["knowledge_component_ids"][0]
+    assessment_set_id = seed.get("assessment_set_id")
+    design = seed.get("question_design") or {}
+    configured_stages = configured_checkpoint_stages(
+        seed,
+        assessment_set_bank(bank, {"assessment_set_id": assessment_set_id}),
+        kc_id,
+    )
     probe = None
     if probe_id:
         probe = db.scalar(
@@ -248,28 +329,57 @@ async def start(
     if row:
         state = json.loads(row.state_json)
         state["checkpoint_seed"] = row.id
-        if restart and state["status"] in {"stopped", "review_required"}:
+        set_changed = mode == "learning" and state.get("assessment_set_id") != assessment_set_id
+        stages_changed = mode == "learning" and state.get("checkpoint_stages") != configured_stages
+        if stages_changed or set_changed:
+            # A teacher-approved sequence change invalidates the old position.
+            # A different question set for the same KC must also start a clean
+            # conversation rather than borrowing an item from the old set.
+            state.update(
+                status="active",
+                stage=configured_stages[0],
+                checkpoint_stages=configured_stages,
+                assessment_set_id=assessment_set_id,
+                used=[],
+                seen_questions=[],
+                dimensions={},
+                evidence_ids=[],
+                receipts={},
+                generated_items={},
+                attempts=0,
+                item_id=None,
+            )
+            for key in ("last_result", "review", "coverage_gap", "delayed_probe"):
+                state.pop(key, None)
+            await assign(state, bank, kc_id)
+        elif mode == "learning" and not state.get("checkpoint_stages"):
+            state["checkpoint_stages"] = configured_stages
+            if state.get("status") == "coverage_gap":
+                state["stage"] = configured_stages[0]
+        if design.get("mode") == "fixed":
+            state["preferred_item_id"] = seed["assessment_id"]
+        if not stages_changed and restart and state["status"] in {"stopped", "review_required"}:
             state["status"] = "active"
             if state.get("item_id"):
                 state["used"].append(state["item_id"])
                 old_item = next(
-                    (item for item in instance_bank(bank, state) if item["assessment_id"] == state["item_id"]), None
+                    (item for item in checkpoint_bank(bank, state) if item["assessment_id"] == state["item_id"]), None
                 )
                 if old_item:
                     state.setdefault("seen_questions", []).append(question_fingerprint(old_item))
             await assign(state, bank, kc_id)
-        if state["status"] == "coverage_gap":
+        if not stages_changed and state["status"] == "coverage_gap":
             state["status"] = "active"
             await assign(state, bank, kc_id)
-        elif state["status"] in {"active", "needs_support", "verification_required"}:
+        elif not stages_changed and state["status"] in {"active", "needs_support", "verification_required"}:
             current = next(
-                (item for item in instance_bank(bank, state) if item["assessment_id"] == state.get("item_id")), None
+                (item for item in checkpoint_bank(bank, state) if item["assessment_id"] == state.get("item_id")), None
             )
             if not current or current["rubric_version"] != state.get("item_version"):
                 # Do not carry stale success/attempts into a changed rubric.
                 state["status"] = "active"
                 state["dimensions"] = {}
-                state["stage"] = "recall" if mode == "learning" else state["stage"]
+                state["stage"] = state.get("checkpoint_stages", list(STAGES))[0] if mode == "learning" else state["stage"]
                 state["used"] = [] if mode == "learning" else state["used"]
                 state["generated_items"] = {}
                 await assign(state, bank, kc_id)
@@ -288,8 +398,11 @@ async def start(
     baseline = json.loads(probe.payload_json) if probe else {}
     state = {
         "checkpoint_seed": row.id,
+        "assessment_set_id": assessment_set_id,
         "status": "active",
-        "stage": baseline.get("stage", "recall"),
+        "stage": baseline.get("stage", configured_stages[0]),
+        "checkpoint_stages": baseline.get("checkpoint_stages", configured_stages),
+        "preferred_item_id": seed["assessment_id"] if design.get("mode") == "fixed" else None,
         "used": baseline.get("used", []),
         "seen_questions": baseline.get("seen_questions", []),
         "dimensions": baseline.get("dimensions", {}),
@@ -403,6 +516,18 @@ async def advance(
     state["previous_answer"] = answer[:1500]
     state["attempts"] = state.get("attempts", 0) + 1
     assessment = result.get("assessment_result") or {}
+    rubric_labels = {
+        str(criterion.get("criterion_id")): str(
+            criterion.get("name") or criterion.get("description") or criterion.get("criterion_id")
+        )
+        for criterion in item.get("approved_rubric") or []
+        if criterion.get("criterion_id")
+    }
+    criterion_scores = [
+        {**score, "criterion_text": rubric_labels.get(str(score.get("criterion_id")), str(score.get("criterion_id") or ""))}
+        for score in assessment.get("criterion_scores") or []
+        if isinstance(score, dict)
+    ]
     evidence = (result.get("output") or {}).get("learning_evidence") or {}
     decision = result.get("assessment_review") or {}
     resolved = (
@@ -421,7 +546,7 @@ async def advance(
         "confidence": evidence.get("confidence", "low"),
         "demonstrated_level": evidence.get("demonstrated_level", "no_evidence"),
         "provisional": decision.get("status") != "accepted" if decision else not evidence.get("can_update_knowledge"),
-        "criterion_scores": assessment.get("criterion_scores") or [],
+        "criterion_scores": criterion_scores,
         "evidence_ids": assessment.get("evidence_ids") or [],
         "requires_instructor_review": decision.get("status") == "pending_review"
         if decision
@@ -468,7 +593,13 @@ async def advance(
         else:
             state.update(status="review_required", reason="insufficient_retention_evidence")
     else:
-        step = next_step(state["stage"], result, hint_level=state.get("hint_level", 0), attempts=state["attempts"])
+        step = next_step(
+            state["stage"],
+            result,
+            hint_level=state.get("hint_level", 0),
+            attempts=state["attempts"],
+            stages=state.get("checkpoint_stages") or STAGES,
+        )
         if step["status"] in {"active", "completed"}:
             state["dimensions"][DIMENSION[state["stage"]]] = "passed"
             state["evidence_ids"].extend(assessment.get("evidence_ids") or [])

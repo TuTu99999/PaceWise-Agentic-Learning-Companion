@@ -1,31 +1,21 @@
 import type { Clock, Plan } from '../types';
 import { addDays, calendarWeekStart, currentAppDateTime, toMin, weekdayOf } from './time';
 
-export const WEEKLY_REFLECT_DEFAULT_OPEN: Clock = '20:00';
 export const WEEKLY_REFLECT_GRACE_END: Clock = '09:00';
 
 export interface WeeklyReflectionCycle {
   weekStart: string;
   weekEnd: string;
   effectiveWeekStart: string;
-  opensAt: Clock;
   isOpen: boolean;
   isGracePeriod: boolean;
   isPastPeriod: boolean;
   periodComplete: boolean;
 }
 
-function latestSundayBlockEnd(plan: Plan | null, sunday: string): Clock | null {
-  const ends = (plan?.blocks ?? [])
-    .filter((block) => block.date === sunday)
-    .map((block) => block.end)
-    .sort((left, right) => toMin(right) - toMin(left));
-  return ends[0] ?? null;
-}
-
 /** Resolve the fixed Monday-Sunday reflection period in Asia/Ho_Chi_Minh UI time. */
 export function weeklyReflectionCycle(
-  plan: Plan | null,
+  _plan: Plan | null,
   date?: string,
   time?: Clock,
   selectedWeekStart?: string,
@@ -38,19 +28,14 @@ export function weeklyReflectionCycle(
   const automaticWeekStart = inMondayGrace ? addDays(calendarWeekStart(resolvedDate), -7) : calendarWeekStart(resolvedDate);
   const weekStart = selectedWeekStart ?? automaticWeekStart;
   const weekEnd = addDays(weekStart, 6);
-  const lastBlockEnd = latestSundayBlockEnd(plan, weekEnd);
-  const opensAt = lastBlockEnd && toMin(lastBlockEnd) > toMin(WEEKLY_REFLECT_DEFAULT_OPEN)
-    ? lastBlockEnd
-    : WEEKLY_REFLECT_DEFAULT_OPEN;
   const isPastPeriod = weekEnd < resolvedDate;
   const isSelectedGracePeriod = inMondayGrace && weekEnd === addDays(resolvedDate, -1);
-  const isSundayWindow = weekday === 6 && resolvedDate === weekEnd && toMin(resolvedTime) >= toMin(opensAt);
+  const isSundayWindow = weekday === 6 && resolvedDate === weekEnd;
 
   return {
     weekStart,
     weekEnd,
     effectiveWeekStart: addDays(weekStart, 7),
-    opensAt,
     isOpen: isPastPeriod || isSelectedGracePeriod || isSundayWindow,
     isGracePeriod: isSelectedGracePeriod,
     isPastPeriod,
@@ -58,22 +43,15 @@ export function weeklyReflectionCycle(
   };
 }
 
-/**
- * Reflect is retrospective by default. Before the current week's official
- * Sunday window opens, show the week that has actually finished instead of a
- * mostly-empty future plan. The learner can still opt into the current week.
- */
+/** Reflect opens on the calendar week that contains the requested/current day. */
 export function defaultWeeklyReflectionWeekStart(
-  plan: Plan | null,
+  _plan: Plan | null,
   date?: string,
-  time?: Clock,
+  _time?: Clock,
 ) {
   const current = currentAppDateTime();
   const resolvedDate = date ?? current.date;
-  const resolvedTime = time ?? current.time;
-  const automatic = weeklyReflectionCycle(plan, resolvedDate, resolvedTime);
-  if (automatic.isOpen) return automatic.weekStart;
-  return addDays(calendarWeekStart(resolvedDate), -7);
+  return calendarWeekStart(resolvedDate);
 }
 
 /** Return the newest saved plan snapshot that belongs to a reflection week. */

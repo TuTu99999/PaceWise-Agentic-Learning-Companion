@@ -102,18 +102,26 @@ async def test_archived_course_lessons_do_not_block_a_new_timetable(client, nati
 
 
 @pytest.mark.asyncio
-async def test_ongoing_class_and_overdue_task_are_still_rejected(client, native):
+async def test_ongoing_class_and_overdue_task_can_be_imported_for_demo_history(client, native):
     now = datetime.now(UTC)
     rows = [lesson(now - timedelta(minutes=10)),
             {"course_id": 1, "sheet": "Tasks", "row": 2, "data": {
                 "title": "Old assignment", "kind": "assignment", "points_possible": 10,
                 "due_at": (now - timedelta(days=1)).isoformat(), "published": True,
             }}]
-    response = await preview(client, await sign_in(client), rows)
+    headers = await sign_in(client)
+    response = await preview(client, headers, rows)
     assert response.status_code == 200, response.text
-    errors = response.json()["errors"]
-    assert any("đang diễn ra" in error["message"] for error in errors)
-    assert any("Deadline phải ở tương lai" in error["message"] for error in errors)
+    draft = response.json()
+    assert not draft["errors"]
+    assert draft["counts"]["lessons"] == 1
+    assert draft["counts"]["tasks"] == 1
+
+    applied = await client.post(ROOT + "/confirm", headers=headers, json={"ticket": draft["ticket"]})
+    assert applied.status_code == 200, applied.text
+    with CourseSession() as db:
+        assert db.scalar(select(CalendarEvent).where(CalendarEvent.title == "Historical lesson"))
+        assert db.scalar(select(Assignment).where(Assignment.title == "Old assignment"))
 
 
 @pytest.mark.asyncio

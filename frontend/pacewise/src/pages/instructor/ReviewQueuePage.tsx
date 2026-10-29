@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Badge } from '../../components/ui/Badge';
 import { StatTile } from '../../components/domain/StatTile';
 import { Button } from '../../components/ui/Button';
-import { Card, CardHeader } from '../../components/ui/Card';
+import { Card } from '../../components/ui/Card';
 import { Select, Textarea } from '../../components/ui/Field';
 import { Modal } from '../../components/ui/Modal';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -135,9 +135,9 @@ export function ReviewQueuePage() {
       <PageHeader title="Hàng chờ duyệt" description="Các ca hệ thống không đủ tin cậy để tự kết luận. Chỉ hiển thị trích đoạn liên quan tới rubric." />
       {loadError && state.reviewQueue.length === 0 && <ErrorState title="Không thể tải hàng chờ duyệt" description={loadError.message} requestId={loadError.requestId} />}
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-busy={loading}>
-        <StatTile icon="inbox" label="Cần xử lý" value={openCount} hint="chưa có quyết định" />
-        <StatTile icon="eyeOff" label="Chờ bằng chứng" value={evidenceCount} hint="chưa đủ căn cứ" />
-        <StatTile icon="checkCircle" label="Đã xử lý" value={resolvedCount} hint="có audit" />
+        <StatTile icon="inbox" label="Cần xử lý" value={openCount} />
+        <StatTile icon="eyeOff" label="Chờ bằng chứng" value={evidenceCount} />
+        <StatTile icon="checkCircle" label="Đã xử lý" value={resolvedCount} />
       </div>
       <div className="mb-5 inline-flex rounded-xl border border-line bg-white p-1" role="tablist" aria-label="Lọc hàng chờ">
         {(
@@ -170,20 +170,6 @@ export function ReviewQueuePage() {
           ))}
         </div>
       )}
-
-      <Card className="mt-6" aria-labelledby="audit">
-        <CardHeader id="audit" title="Nhật ký quyết định (audit)" />
-        <ul className="divide-y divide-line">
-          {state.audit.slice(0, 6).map((a) => (
-            <li key={a.id} className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:gap-3">
-              <span className="caption w-28 shrink-0 tabular-nums">{a.at}</span>
-              <span className="text-[15px]">
-                <strong>{a.actor}</strong> · {a.action}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </Card>
 
       <Modal
         open={!!active}

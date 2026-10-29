@@ -5,9 +5,15 @@ import { switchCourse, syncCanvas } from '../../services/api';
 import { useAppStore } from '../../store/AppStore';
 import { Icon } from '../ui/Icon';
 
-export function CourseSwitcher({ allowAll = false, compact = false, notifyOnSuccess = true }: {
+export function CourseSwitcher({
+  allowAll = false,
+  compact = false,
+  menuAlign = 'right',
+  notifyOnSuccess = true,
+}: {
   allowAll?: boolean;
   compact?: boolean;
+  menuAlign?: 'left' | 'right';
   notifyOnSuccess?: boolean;
 }) {
   const { state, dispatch } = useAppStore();
@@ -101,7 +107,7 @@ export function CourseSwitcher({ allowAll = false, compact = false, notifyOnSucc
           <Icon name="book" size={20} />
           {busy && <span className="absolute inset-1 animate-pulse rounded-lg border border-primary" aria-hidden="true" />}
         </summary>
-        <div className="absolute right-0 top-12 z-50 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-line bg-white shadow-xl">
+        <div className={`absolute top-12 z-50 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-line bg-white shadow-xl ${menuAlign === 'left' ? 'left-0' : 'right-0'}`}>
           <div className="border-b border-line px-4 py-3">
             <p className="text-sm font-bold">Chọn môn học</p>
             <p className="mt-0.5 text-xs text-muted">Nội dung Hỏi đáp dùng dữ liệu của môn đang chọn.</p>

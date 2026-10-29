@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -8,6 +9,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from src.config import Settings, get_settings
+from src.course_source.db import SessionLocal as CourseSourceSessionLocal
+from src.course_source.models import Course, CourseModule, ModuleItem, Resource
+from src.course_source.telemetry import record_change
 from src.db import get_db
 from src.persistence_models import (
     AgentReviewCase,
@@ -27,6 +31,7 @@ from src.services.question_design import QuestionDesign, preview_design
 from src.services.reminder_schedule import reconcile_jobs
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 WORKSPACE_KEYS = {
     "studyPreferences",
@@ -77,10 +82,14 @@ class InstructorActionRequest(BaseModel):
 
 
 ASSESSMENT_CONTENT_FIELDS = (
+    "assessmentSetId",
     "question",
     "rubric",
     "level",
     "source",
+    "sourceResourceId",
+    "sourceChapter",
+    "moduleId",
     "answerType",
     "knowledgeComponentIds",
     "kcProvisional",
@@ -89,6 +98,31 @@ ASSESSMENT_CONTENT_FIELDS = (
     "questionDesign",
 )
 REVIEW_STATUSES = {"pending", "in_review", "approved", "edited", "rejected", "needs_evidence"}
+
+
+def _notify_instructor_action_change(*, course_id: int, actor_user_id: int, action_type: str, entity_id: str) -> None:
+    """Wake enrolled learners after a teacher changes course-owned data.
+
+    The durable instructor action and the course-source event live in separate
+    SQLAlchemy namespaces. The event contains only invalidation metadata; the
+    student fetches the current scoped projection before deriving Plan impacts.
+    """
+    try:
+        with CourseSourceSessionLocal() as source_db:
+            if source_db.get(Course, course_id) is None:
+                return
+            record_change(
+                source_db,
+                actor_user_id=actor_user_id,
+                action=f"instructor.{action_type}.changed",
+                entity_type=f"instructor_{action_type}",
+                entity_id=entity_id,
+                course_id=course_id,
+                metadata={"action_type": action_type},
+            )
+            source_db.commit()
+    except Exception as exc:  # the saved action remains authoritative and syncable
+        logger.error("instructor_action_invalidation_failed action_type=%s error_type=%s", action_type, type(exc).__name__)
 
 
 class DesignPreviewRequest(BaseModel):
@@ -110,12 +144,95 @@ def assessment_design_preview(
     }
 
 
+@router.delete("/instructor/assessment/{entity_id}")
+def delete_assessment_design(
+    entity_id: str,
+    session: SessionContext = Depends(require_instructor),
+    _: SessionContext = Depends(require_csrf),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Retire an assessment without erasing its approval and evidence audit."""
+    if not entity_id.strip() or len(entity_id) > 128:
+        raise HTTPException(status_code=422, detail="Invalid assessment identifier")
+    latest = db.scalar(
+        select(InstructorAction)
+        .where(
+            InstructorAction.course_id == session.course_id,
+            InstructorAction.action_type == "assessment",
+            InstructorAction.entity_id == entity_id,
+        )
+        .order_by(InstructorAction.created_at.desc())
+    )
+    previous = json.loads(latest.payload_json or "{}") if latest else {}
+    if previous.get("status") == "deleted":
+        return {"entityId": entity_id, "deleted": True, "retainedAudit": True}
+    tombstone = {
+        **previous,
+        "status": "deleted",
+        "deletedAt": datetime.now(UTC).isoformat(),
+        "version": max(0, int(previous.get("version") or 0)),
+    }
+    db.add(
+        InstructorAction(
+            id=str(uuid.uuid4()),
+            course_id=session.course_id,
+            actor_user_id=session.user_id,
+            action_type="assessment",
+            entity_id=entity_id,
+            payload_json=json.dumps(tombstone, ensure_ascii=False),
+        )
+    )
+    db.commit()
+    _notify_instructor_action_change(
+        course_id=session.course_id,
+        actor_user_id=session.user_id,
+        action_type="assessment",
+        entity_id=entity_id,
+    )
+    return {"entityId": entity_id, "deleted": True, "retainedAudit": True}
+
+
 def _versioned_assessment_payload(
     db: Session,
     course_id: int,
     entity_id: str,
     incoming: dict,
 ) -> dict:
+    if "sourceResourceId" in incoming:
+        try:
+            source_resource_id = int(incoming["sourceResourceId"])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="sourceResourceId must be an integer") from exc
+        with CourseSourceSessionLocal() as source_db:
+            resource = source_db.scalar(
+                select(Resource).where(Resource.id == source_resource_id, Resource.course_id == course_id)
+            )
+            resource_title = resource.title if resource else None
+            resource_chapter = source_db.scalar(
+                select(CourseModule.name)
+                .join(ModuleItem)
+                .where(
+                    CourseModule.course_id == course_id,
+                    ModuleItem.item_type == "resource",
+                    ModuleItem.content_id == source_resource_id,
+                )
+                .limit(1)
+            )
+        if resource is None:
+            raise HTTPException(status_code=422, detail="Assessment source must be an uploaded file in this course")
+        if not resource_chapter:
+            raise HTTPException(status_code=422, detail="Assessment source must be assigned to a course chapter")
+        incoming = {
+            **incoming,
+            "sourceResourceId": source_resource_id,
+            "source": resource_title,
+            "sourceChapter": resource_chapter,
+        }
+    for field, maximum in (("sourceChapter", 255), ("moduleId", 128), ("assessmentSetId", 128)):
+        if field in incoming and (
+            not isinstance(incoming[field], str) or not incoming[field].strip() or len(incoming[field]) > maximum
+        ):
+            raise HTTPException(status_code=422, detail=f"{field} must be bounded non-empty text")
     if "questionDesign" in incoming:
         from pydantic import ValidationError
 
@@ -307,6 +424,12 @@ def create_instructor_action(
     # SELECT may autoflush, even when the request will subsequently return 409.
     db.add(action)
     db.commit()
+    _notify_instructor_action_change(
+        course_id=session.course_id,
+        actor_user_id=session.user_id,
+        action_type=payload.action_type,
+        entity_id=payload.entity_id,
+    )
     return {
         "id": action.id,
         "createdAt": action.created_at.isoformat(),

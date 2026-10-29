@@ -11,8 +11,11 @@ describe('Study preferences persistence', () => {
     expect(result.studyPreferences).toEqual({ activityRhythms: [], sessionMinutes: 90, breakMinutes: 10, checkpointMinutes: 0, adaptiveSuggestionsEnabled: true });
   });
   it('does not mutate the confirmed plan when editing rhythm', () => {
-    const next = reducer(initialState, { type: 'UPDATE_STUDY_PREFERENCES', patch: { sessionMinutes: 25, breakMinutes: 5 } });
-    expect(next.plan).toBe(initialState.plan);
+    const plan = { id: 'plan-1', weekStart: '2026-10-12', version: 1, savedAt: '2026-10-15T00:00:00Z',
+      blocks: [{ id: 'b1', taskId: 't1', date: '2026-10-15', start: '15:00', end: '16:00' }] };
+    const next = reducer({ ...initialState, plan }, { type: 'UPDATE_STUDY_PREFERENCES', patch: { sessionMinutes: 25, breakMinutes: 5 } });
+    expect(next.plan).toBe(plan);
+    expect(next.calendarDraft).toMatchObject({ blocks: plan.blocks, needsAnalysis: true });
     expect(next.studyPreferences).toEqual({ activityRhythms: [], sessionMinutes: 25, breakMinutes: 5, checkpointMinutes: 0, adaptiveSuggestionsEnabled: true });
     expect(normalizeStudyPreferences({ sessionMinutes: Infinity, breakMinutes: -10 })).toEqual({ activityRhythms: [], sessionMinutes: 90, breakMinutes: 5, checkpointMinutes: 0, adaptiveSuggestionsEnabled: true });
   });

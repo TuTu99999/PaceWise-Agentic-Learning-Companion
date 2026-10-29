@@ -21,8 +21,10 @@ RUN npm run build
 FROM nginx:1.30.5-alpine3.24@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
 
 # Apply repository security fixes that may be newer than the immutable base
-# layer while keeping the runtime on the pinned Alpine release line.
-RUN apk upgrade --no-cache
+# layer while keeping the runtime on the pinned Alpine release line. Keep the
+# explicit expat floor so a cached upgrade layer cannot reintroduce CVE-2026-77214.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache 'expat>=2.9.0-r0'
 
 COPY frontend/pacewise/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html

@@ -26,6 +26,41 @@ def fold_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", normalized.casefold()).strip()
 
 
+def _subject_tokens(value: str) -> set[str]:
+    ignored = {"bai", "tap", "mon", "course", "nhap", "hoc", "he", "va", "lap", "trinh"}
+    return {
+        token
+        for token in fold_text(value).split()
+        if len(token) >= 2 and token not in ignored
+    }
+
+
+def declared_course_subject(items: list[dict[str, Any]]) -> str:
+    """Return an explicit ``Bài tập môn ...`` label without inferring one."""
+    for item in items[:6]:
+        values = [
+            item.get("section_title"), item.get("heading"), item.get("title"),
+            *((item.get("body") or [])[:2] if isinstance(item.get("body"), list) else []),
+            item.get("content"),
+        ]
+        for value in values:
+            for line in str(value or "").splitlines():
+                match = re.match(r"^bai\s+tap\s+mon\s+(.+)$", fold_text(line))
+                if match:
+                    return match.group(1).strip()
+    return ""
+
+
+def document_matches_course(items: list[dict[str, Any]], course_name: str) -> bool:
+    """Reject only a declared course subject that conflicts with the target."""
+    declared = _subject_tokens(declared_course_subject(items))
+    expected = _subject_tokens(course_name)
+    if not declared or not expected:
+        return True
+    required = 1 if min(len(declared), len(expected)) == 1 else 2
+    return len(declared & expected) >= required
+
+
 _PRIVATE_MARKERS = (
     "dap an",
     "loi giai",

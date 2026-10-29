@@ -39,11 +39,14 @@ def get_agent_llm(
     base_url = settings.openai_base_url or os.getenv("OPENAI_BASE_URL", "")
 
     # Tự động map localhost sang host.docker.internal khi chạy trong Docker container
-    if base_url and ("localhost" in base_url or "127.0.0.1" in base_url):
-        if os.path.exists("/.dockerenv") or os.path.exists("/proc/1/cgroup"):
+    running_in_container = os.path.exists("/.dockerenv") or os.path.exists("/proc/1/cgroup")
+    if base_url:
+        if running_in_container and ("localhost" in base_url or "127.0.0.1" in base_url):
             base_url = base_url.replace("localhost", "host.docker.internal").replace(
                 "127.0.0.1", "host.docker.internal"
             )
+        elif not running_in_container and "host.docker.internal" in base_url:
+            base_url = base_url.replace("host.docker.internal", "127.0.0.1")
 
     # Tham số gọi trực tiếp và MODEL_NAME runtime có độ ưu tiên cao nhất.
     # Proxy screensavers chỉ nhận model đã định tuyến; không dùng một model

@@ -17,8 +17,8 @@ const oauthErrors: Record<string, string> = {
 
 export function SignUpPage() {
   const { t } = useLocale();
-  useDocumentTitle('Tiếp tục với Google');
   const { state } = useAppStore();
+  useDocumentTitle('Tiếp tục với Google', state.authReady && !state.user);
   const [params] = useSearchParams();
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [statusError, setStatusError] = useState(false);

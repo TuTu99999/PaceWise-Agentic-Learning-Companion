@@ -20,7 +20,7 @@ from statistics import median
 from typing import Any
 
 from src.services.planning_signals import normalize_planning_signal
-from src.services.planning_time import block_at, deadline_at
+from src.services.planning_time import assignment_available_at, block_at, deadline_at
 
 LOW_MASTERY_THRESHOLD = 0.50
 DEVELOPING_MASTERY_THRESHOLD = 0.75
@@ -162,6 +162,21 @@ def assignment_structure(assignment: dict[str, Any]) -> dict[str, Any]:
         "dependencies": bool(assignment.get("dependencies") or assignment.get("prerequisites")),
     }
     score = sum(1 for present in checks.values() if present)
+    assignment_parts = [
+        item for item in assignment.get("assignment_parts") or []
+        if isinstance(item, dict) and item.get("partId") and item.get("content")
+    ]
+    # A multi-question brief is exactly where semantic decomposition adds
+    # value: the model may group related sub-questions and name useful outputs,
+    # while the server verifies that every extracted question is covered.
+    if len(assignment_parts) >= 2:
+        return {
+            "score": score,
+            "maximum": len(checks),
+            "route": "llm" if len(assignment_parts) <= 12 else "template",
+            "signals": {**checks, "assignment_parts": True},
+            "partCount": len(assignment_parts),
+        }
     # A real rubric plus a usable brief is stronger planning evidence than a
     # free-form model decomposition.  Use the deterministic rubric allocator;
     # reserve the LLM for genuinely unstructured assignments.
@@ -207,6 +222,43 @@ def build_template_milestones(
         level = "khó" if factor >= 1.24 else "dễ" if factor <= 0.85 else "vừa"
         return factor, level
 
+    def assignment_part_effort_factor(part: dict[str, Any]) -> float:
+        """Weight observable assignment labels without inventing task content.
+
+        A short conceptual question and a project component should not receive
+        identical time merely because their paragraphs have similar lengths.
+        The public label supplies a bounded effort signal; total assignment
+        time remains the learner/teacher-confirmed budget.
+        """
+        label = _fold(part.get("label"))
+        if any(token in label for token in ("thanh phan", "component", "phase", "milestone")):
+            return 1.80
+        if any(token in label for token in ("yeu cau", "requirement", "feature", "deliverable")):
+            return 1.30
+        if any(token in label for token in ("cau", "question")):
+            return 0.75
+        return 1.00
+
+    def summarize_part_labels(parts: list[dict[str, Any]]) -> str:
+        labels = list(dict.fromkeys(
+            str(item.get("label") or item.get("partId") or "Phần việc").strip()
+            for item in parts
+        ))
+        if len(labels) <= 4:
+            return "; ".join(labels)
+        counts = {"câu": 0, "yêu cầu": 0, "thành phần": 0, "phần": 0}
+        for label in labels:
+            folded = _fold(label)
+            if folded.startswith(("cau", "question")):
+                counts["câu"] += 1
+            elif folded.startswith(("yeu cau", "requirement")):
+                counts["yêu cầu"] += 1
+            elif folded.startswith(("thanh phan", "component")):
+                counts["thành phần"] += 1
+            else:
+                counts["phần"] += 1
+        return " · ".join(f"{count} {name}" for name, count in counts.items() if count)
+
     def group_criteria(values: list[dict[str, Any]], limit: int) -> list[list[dict[str, Any]]]:
         if len(values) <= limit:
             return [[value] for value in values]
@@ -230,14 +282,81 @@ def build_template_milestones(
             result[-1] += remaining
             return result
         weight_sum = sum(weights) or float(count)
-        raw = [remaining * weight / weight_sum for weight in weights]
-        units = remaining // 15
-        base_units = [int(value // 15) for value in raw]
-        for index, value in enumerate(base_units):
-            result[index] += value * 15
-        for index in sorted(range(count), key=lambda i: raw[i] - base_units[i] * 15, reverse=True)[: units - sum(base_units)]:
-            result[index] += 15
-        result[-1] += remaining % 15
+        # Allocate against each part's share of the *whole* confirmed budget.
+        # Weighting only the time left after a 15-minute floor made medium-size
+        # assignments collapse to identical 30-minute sessions even when a
+        # project component was observably harder than a concept question.
+        targets = [total * weight / weight_sum for weight in weights]
+        while remaining >= 15:
+            target = max(range(count), key=lambda index: targets[index] - result[index])
+            result[target] += 15
+            remaining -= 15
+        if remaining:
+            target = max(range(count), key=lambda index: targets[index] - result[index])
+            result[target] += remaining
+        return result
+
+    assignment_parts = [
+        item for item in assignment.get("assignment_parts") or []
+        if isinstance(item, dict) and item.get("partId") and item.get("content")
+    ]
+    if len(assignment_parts) >= 2:
+        # Keep sessions useful (normally 30-90 minutes) by grouping adjacent
+        # short questions when the user's total estimate cannot support one
+        # session per question.  Ordering is preserved for prerequisites.
+        group_count = min(len(assignment_parts), 12, max(1, int(target_minutes) // 30))
+        groups: list[list[dict[str, Any]]] = [[] for _ in range(group_count)]
+        for index, part in enumerate(assignment_parts):
+            bucket = min(group_count - 1, index * group_count // len(assignment_parts))
+            groups[bucket].append(part)
+        group_facts = []
+        for group in groups:
+            combined = " ".join(str(item.get("content") or "") for item in group)
+            factor, level = complexity_factor(combined)
+            # Longer prompts need more reading/implementation time, but keep
+            # that heuristic bounded so wording alone cannot dominate a plan.
+            length_factor = min(1.5, max(0.75, len(combined) / 500))
+            part_effort_factor = sum(assignment_part_effort_factor(item) for item in group) / len(group)
+            group_facts.append(
+                {
+                    "parts": group,
+                    "score": factor * length_factor * part_effort_factor,
+                    "difficulty": level,
+                    "complexityFactor": factor,
+                    "partEffortFactor": part_effort_factor,
+                }
+            )
+        minutes = allocate(target_minutes, [item["score"] for item in group_facts])
+        result: list[dict[str, Any]] = []
+        for index, (facts, allocated) in enumerate(zip(group_facts, minutes), start=1):
+            parts = facts["parts"]
+            label_summary = summarize_part_labels(parts)
+            part_ids = [str(item["partId"]) for item in parts]
+            source_refs = [
+                f"assignment:{task_id}",
+                *[str(item.get("sourceRef")) for item in parts if item.get("sourceRef")],
+            ]
+            milestone_id = f"{task_id}:questions-{index}"
+            result.append(
+                {
+                    "milestone_id": milestone_id,
+                    "task_id": task_id,
+                    "title": f"Làm {label_summary} — {title}",
+                    "deliverable": f"Lời giải có thể kiểm tra cho {label_summary}",
+                    "estimated_minutes": allocated,
+                    "depends_on": [result[-1]["milestone_id"]] if result else [],
+                    "assignment_part_ids": part_ids,
+                    "source_refs": list(dict.fromkeys(source_refs)),
+                    "decomposition_source": "assignment_question_evidence",
+                    "difficulty": facts["difficulty"],
+                    "allocation_basis": {
+                        "method": "question_complexity_x_bounded_length",
+                        "complexityFactor": round(facts["complexityFactor"], 2),
+                        "partEffortFactor": round(facts["partEffortFactor"], 2),
+                        "confidence": "document_grounded_heuristic",
+                    },
+                }
+            )
         return result
 
     if criteria:
@@ -302,17 +421,25 @@ def build_template_milestones(
         )
     else:
         steps = (
-            ("Extract requirements", "Verified requirement checklist", 0.25),
-            ("Complete the task", "Reviewable task output", 0.50),
-            ("Review and submit", "Submission-ready artifact", 0.25),
+            ("Đọc đề và xác định yêu cầu", "Checklist yêu cầu cần hoàn thành", 0.25),
+            ("Thực hiện nội dung chính", "Kết quả có thể tự kiểm tra", 0.50),
+            ("Rà soát và chuẩn bị nộp", "Sản phẩm sẵn sàng nộp", 0.25),
         )
 
     remaining = max(30, int(target_minutes))
     result: list[dict[str, Any]] = []
-    for index, (step_title, deliverable, share) in enumerate(steps):
+    # Do not emit a five-minute tail milestone for short demo assignments.
+    # Keep at least 15 minutes per stage and merge later stages when the
+    # confirmed budget is small (e.g. 40 minutes -> 15 + 25).
+    usable_steps = steps[: min(len(steps), max(1, remaining // 15))]
+    for index, (step_title, deliverable, share) in enumerate(usable_steps):
         if remaining <= 0:
             break
-        minutes = remaining if index == len(steps) - 1 else min(remaining, max(15, _round_up(target_minutes * share)))
+        minutes = (
+            remaining
+            if index == len(usable_steps) - 1
+            else min(remaining - 15 * (len(usable_steps) - index - 1), max(15, _round_up(target_minutes * share)))
+        )
         milestone_id = f"{task_id}:template-{index + 1}"
         result.append(
             {
@@ -378,7 +505,13 @@ def _numeric_mastery(value: Any) -> float | None:
     if "level" in value:
         # Scheduling readiness weights are policy constants, not estimated
         # mastery probabilities. Unknown knowledge is not evidence of weakness.
-        if set(value.get("unresolved_dimensions") or []) & {"conceptual", "reasoning", "application"}:
+        if set(value.get("unresolved_dimensions") or []) & {
+            "recall",
+            "conceptual",
+            "reasoning",
+            "application",
+            "transfer",
+        }:
             return 0.25
         level = value.get("level")
         if level == "retained":
@@ -775,6 +908,10 @@ def evaluate_plan_quality(
         str(item.get("id")): deadline_at(item.get("deadline") or item.get("due_at"), fallback, timezone_name)
         for item in assignments
     }
+    earliest_starts = {
+        str(item.get("id")): assignment_available_at(item, timezone_name)
+        for item in assignments
+    }
     checked_at = now
     if checked_at is None and draft.get("enforceCurrentTime") and draft.get("createdAt"):
         checked_at = datetime.fromisoformat(draft["createdAt"])
@@ -809,6 +946,13 @@ def evaluate_plan_quality(
             violations.append({"code": "UNKNOWN_TASK", "blockId": block.get("id")})
         if deadline and end_at > deadline:
             violations.append({"code": "AFTER_DEADLINE", "blockId": block.get("id")})
+        earliest_start = earliest_starts.get(str(block.get("taskId") or ""))
+        if earliest_start is not None and start_at < earliest_start:
+            violations.append({
+                "code": "BEFORE_PREREQUISITE",
+                "blockId": block.get("id"),
+                "earliestStartAt": earliest_start.isoformat(),
+            })
         if str(block.get("taskId")) in completed_tasks:
             violations.append({"code": "TASK_COMPLETED", "blockId": block.get("id")})
         if availability and not block.get("lockedOngoing"):

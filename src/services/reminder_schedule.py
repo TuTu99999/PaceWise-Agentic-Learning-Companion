@@ -175,7 +175,16 @@ def candidates(state: dict, now: datetime) -> list[dict]:
                     1,
                 )
     for impact in state.get("planImpacts") or []:
-        if impact.get("kind") not in {"schedule_conflict", "deadline_earlier", "assignment_added"}:
+        if impact.get("kind") not in {
+            "course_added",
+            "schedule_conflict",
+            "schedule_changed",
+            "capacity_released",
+            "deadline_earlier",
+            "deadline_later",
+            "assignment_removed",
+            "assignment_added",
+        }:
             continue
         at = parse_time(impact.get("detectedAt"))
         if at:

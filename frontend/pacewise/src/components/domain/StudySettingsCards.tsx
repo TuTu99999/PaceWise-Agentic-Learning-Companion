@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button } from '../ui/Button';
+import { Button, ButtonLink } from '../ui/Button';
 import { Card, CardHeader } from '../ui/Card';
 import { useToast } from '../ui/Toast';
 import { useAppStore } from '../../store/AppStore';
@@ -8,6 +8,41 @@ import { disablePushNotifications, enablePushNotifications, supportsPush } from 
 import { getPushStatus, type PushStatus } from '../../services/api';
 import { RhythmProposalCard } from './RhythmProposalCard';
 import { ActivityRhythmSettings } from './ActivityRhythmSettings';
+import { replanHref } from '../../utils/replanNavigation';
+
+function MinuteInput({ label, value, min, max, onChange, className = '' }: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { setDraft(String(value)); }, [value]);
+  const updateDraft = (raw: string) => {
+    setDraft(raw);
+    const parsed = Number(raw);
+    if (raw !== '' && Number.isInteger(parsed) && parsed >= min && parsed <= max) onChange(parsed);
+  };
+  return <label className={`${className} flex flex-col gap-1 text-sm`}>
+    {label}
+    <input
+      className="rounded-lg border border-line bg-white p-2"
+      type="number"
+      inputMode="numeric"
+      min={min}
+      max={max}
+      step="1"
+      value={draft}
+      onChange={(event) => updateDraft(event.target.value)}
+      onBlur={() => {
+        const parsed = Number(draft);
+        if (draft === '' || !Number.isInteger(parsed) || parsed < min || parsed > max) setDraft(String(value));
+      }}
+    />
+  </label>;
+}
 
 export function StudySettingsCards() {
   const { state, dispatch } = useAppStore();
@@ -55,11 +90,8 @@ export function StudySettingsCards() {
           <label className="flex items-center gap-3"><input type="checkbox" checked={preferences.deadlineEnabled} onChange={(event) => update({ deadlineEnabled: event.target.checked })} />Nhắc deadline</label>
           <label className="flex items-center gap-3"><input type="checkbox" checked={preferences.studyEnabled} onChange={(event) => update({ studyEnabled: event.target.checked })} />Nhắc bắt đầu Do và lịch học</label>
           <label className="flex items-center gap-3"><input type="checkbox" checked={preferences.reflectEnabled} onChange={(event) => update({ reflectEnabled: event.target.checked })} />Nhắc hoàn thành Reflect</label>
-          <label className="flex flex-col gap-1 text-sm">Nhắc Do trước (phút)
-            <select className="rounded-lg border border-line bg-white p-2" value={preferences.studyBlockLeadMinutes} onChange={(event) => update({ studyBlockLeadMinutes: Number(event.target.value) })}>
-              {[0, 5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes}</option>)}
-            </select>
-          </label>
+          <MinuteInput label="Nhắc Do trước (phút)" value={preferences.studyBlockLeadMinutes} min={0} max={120}
+            onChange={(value) => update({ studyBlockLeadMinutes: value })} />
           <label className="flex flex-col gap-1 text-sm">Tối đa thông báo mỗi ngày
             <select className="rounded-lg border border-line bg-white p-2" value={preferences.dailyCap} onChange={(event) => update({ dailyCap: Number(event.target.value) })}>
               {[1, 2, 3].map((count) => <option key={count} value={count}>{count}</option>)}
@@ -86,24 +118,16 @@ export function StudySettingsCards() {
     <Card aria-labelledby="study-rhythm">
       <CardHeader id="study-rhythm" title="Nhịp học cá nhân" subtitle="Áp dụng khi tạo hoặc phân tích lại kế hoạch; không thay lịch LMS hay lịch đã xác nhận." />
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-sm">Tối đa mỗi ca ưu tiên (phút)
-          <select className="rounded-lg border border-line bg-white p-2" value={rhythm.sessionMinutes} onChange={(event) => dispatch({ type: 'UPDATE_STUDY_PREFERENCES', patch: { sessionMinutes: Number(event.target.value) } })}>
-            {[...new Set([20, 25, 30, 40, 45, 60, 75, 90, 105, 120, rhythm.sessionMinutes])].sort((a, b) => a - b).map((minutes) => <option key={minutes} value={minutes}>{minutes}</option>)}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-sm">Nghỉ giữa phiên (phút)
-          <select className="rounded-lg border border-line bg-white p-2" value={rhythm.breakMinutes} onChange={(event) => dispatch({ type: 'UPDATE_STUDY_PREFERENCES', patch: { breakMinutes: Number(event.target.value) } })}>
-            {[5, 10, 15, 20, 30].map((minutes) => <option key={minutes} value={minutes}>{minutes}</option>)}
-          </select>
-        </label>
+        <MinuteInput label="Tối đa mỗi ca ưu tiên (phút)" value={rhythm.sessionMinutes} min={20} max={120}
+          onChange={(value) => dispatch({ type: 'UPDATE_STUDY_PREFERENCES', patch: { sessionMinutes: value } })} />
+        <MinuteInput label="Nghỉ giữa phiên (phút)" value={rhythm.breakMinutes} min={5} max={30}
+          onChange={(value) => dispatch({ type: 'UPDATE_STUDY_PREFERENCES', patch: { breakMinutes: value } })} />
       </div>
-      <p className="caption mt-3">Ví dụ chọn 90 phút nghĩa là mỗi ca không vượt 90 phút. Ca cuối còn 70 phút hoặc khung rảnh chỉ còn 70 phút vẫn được xếp 70 phút; tổng công việc không bị giảm. Deadline và ca học LMS luôn được giữ nguyên.</p>
-      <label className="mt-3 flex flex-col gap-1 text-sm">Dự phòng thêm cho checkpoint Assessment (phút mỗi phiên)
-        <select className="rounded-lg border border-line bg-white p-2" value={rhythm.checkpointMinutes ?? 0} onChange={(event) => dispatch({ type: 'UPDATE_STUDY_PREFERENCES', patch: { checkpointMinutes: Number(event.target.value) } })}>
-          {[0, 5, 10, 15].map((minutes) => <option key={minutes} value={minutes}>{minutes === 0 ? '0 — đã tính trong estimate công việc' : minutes}</option>)}
-        </select>
-      </label>
-      <p className="caption mt-2">Phần dự phòng nằm trong ca, được tính vào capacity và deadline, không làm giảm số phút công việc. Giữ 0 nếu estimate đã bao gồm kiểm tra.</p>
+      <MinuteInput className="mt-3" label="Dự phòng checkpoint Assessment (phút mỗi phiên)"
+        value={rhythm.checkpointMinutes ?? 0} min={0} max={15}
+        onChange={(value) => dispatch({ type: 'UPDATE_STUDY_PREFERENCES', patch: { checkpointMinutes: value } })} />
+      {(state.plan || state.planDraft || state.calendarDraft) && <ButtonLink className="mt-3" size="sm" icon="sparkle"
+        to={replanHref('preferences', { scope: 'weekly' })}>Tính lại lịch với nhịp mới</ButtonLink>}
       <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={rhythm.adaptiveSuggestionsEnabled ?? true} onChange={(event) => dispatch({ type: 'UPDATE_STUDY_PREFERENCES', patch: { adaptiveSuggestionsEnabled: event.target.checked } })} />Nhận đề xuất nhịp học dựa trên bằng chứng</label>
       <RhythmProposalCard />
       <ActivityRhythmSettings />

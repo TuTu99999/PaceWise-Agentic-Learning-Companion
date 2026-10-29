@@ -59,7 +59,14 @@ def select_item(
     )
 
 
-def next_step(stage: str, outcome: dict, *, hint_level: int, attempts: int) -> dict:
+def next_step(
+    stage: str,
+    outcome: dict,
+    *,
+    hint_level: int,
+    attempts: int,
+    stages: tuple[str, ...] | list[str] = STAGES,
+) -> dict:
     """Abstain/review, remediation, or next stage; never silently skip a missing stage."""
     if outcome.get("status") == "awaiting_teacher":
         return {"status": "review_required", "stage": stage, "reason": "insufficient_evidence"}
@@ -78,10 +85,13 @@ def next_step(stage: str, outcome: dict, *, hint_level: int, attempts: int) -> d
         }
     if hint_level:
         return {"status": "verification_required", "stage": stage, "reason": "need_unseen_item_without_hint"}
-    index = STAGES.index(stage) + 1
+    configured = tuple(value for value in stages if value in STAGES)
+    if not configured or stage not in configured:
+        configured = STAGES
+    index = configured.index(stage) + 1
     return {
-        "status": "completed" if index == len(STAGES) else "active",
-        "stage": STAGES[min(index, len(STAGES) - 1)],
+        "status": "completed" if index == len(configured) else "active",
+        "stage": configured[min(index, len(configured) - 1)],
         "reason": "evidence_accepted",
     }
 

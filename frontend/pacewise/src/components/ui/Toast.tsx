@@ -10,8 +10,15 @@ const ToastContext = createContext<Push>(() => {});
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const push = useCallback<Push>((t) => {
+    // Successful and informational actions are already reflected by the page.
+    // Keeping them as global overlays created noisy duplicate stacks when shared
+    // controls (for example the course switcher) revalidated more than once.
+    if (t.tone === 'success' || t.tone === 'info') return;
+
     const id = uid('toast');
-    setToasts((list) => [...list, { ...t, id }]);
+    // An actionable alert replaces the previous one so the UI never accumulates
+    // a stack that obscures the student's or instructor's current task.
+    setToasts([{ ...t, id }]);
     window.setTimeout(() => setToasts((list) => list.filter((x) => x.id !== id)), 5000);
   }, []);
   return (

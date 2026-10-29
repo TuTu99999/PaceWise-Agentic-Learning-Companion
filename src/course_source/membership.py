@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from src.course_source.course_management import owned, roster
 from src.course_source.models import (
@@ -231,6 +231,115 @@ def copy_lessons(db, course_id, user_id):
         existing.add(key)
 
 
+def _enroll_students(db, course_id, student_ids, actor_id):
+    """Idempotently grant course access and materialize per-student lessons."""
+    current = set(
+        db.scalars(
+            select(Enrollment.user_id).where(
+                Enrollment.course_id == course_id,
+                Enrollment.user_id.in_(student_ids),
+            )
+        )
+    ) if student_ids else set()
+    added = []
+    for student_id in sorted(set(student_ids) - current):
+        db.add(Enrollment(course_id=course_id, user_id=student_id, role="student"))
+        db.flush()
+        copy_lessons(db, course_id, student_id)
+        notify_membership(db, course_id, student_id, actor_id)
+        added.append(student_id)
+    return added
+
+
+def shared_catalog_teacher_id(db, teacher_email):
+    """Resolve the single instructor authorized to publish the demo catalog."""
+    normalized = str(teacher_email or "").strip().lower()
+    if not normalized:
+        return None
+    return db.scalar(select(User.id).where(User.email == normalized, User.role == "instructor"))
+
+
+def auto_enroll_google_student(db, user_id, teacher_email):
+    """Join one verified Gmail student to the source teacher's active catalog.
+
+    This runs on every Google sign-in so courses imported after the original
+    registration are picked up without an invitation or teacher approval.
+    """
+    user = db.get(User, user_id, with_for_update=True)
+    if (
+        not user
+        or user.role != "student"
+        or not db.scalar(select(GoogleIdentity.user_id).where(GoogleIdentity.user_id == user_id))
+    ):
+        return []
+    teacher_id = shared_catalog_teacher_id(db, teacher_email)
+    if teacher_id is None:
+        return []
+    course_ids = list(
+        db.scalars(
+            select(Course.id)
+            .join(Enrollment, Enrollment.course_id == Course.id)
+            .outerjoin(CourseLifecycle, CourseLifecycle.course_id == Course.id)
+            .where(
+                Enrollment.user_id == teacher_id,
+                Enrollment.role == "instructor",
+                Course.published.is_(True),
+                or_(CourseLifecycle.course_id.is_(None), CourseLifecycle.archived.is_(False)),
+            )
+            .distinct()
+            .order_by(Course.id)
+        )
+    )
+    joined = []
+    for course_id in course_ids:
+        joined.extend(_enroll_students(db, course_id, [user_id], user_id))
+
+    # Auto-enrollment supersedes any pending invite for the same identity/course.
+    now = datetime.now(UTC)
+    if course_ids:
+        for invite in db.scalars(
+            select(CourseInvitation).where(
+                CourseInvitation.course_id.in_(course_ids),
+                CourseInvitation.email == user.email.lower(),
+                CourseInvitation.revoked_at.is_(None),
+                CourseInvitation.accepted_at.is_(None),
+            )
+        ):
+            invite.accepted_at = now
+            invite.accepted_by = user_id
+    return joined
+
+
+def auto_enroll_google_students(db, course_id, actor_id, teacher_email):
+    """Attach all verified Gmail students to one source-teacher course."""
+    course = db.get(Course, course_id)
+    lifecycle = db.get(CourseLifecycle, course_id)
+    teacher_id = shared_catalog_teacher_id(db, teacher_email)
+    if (
+        not course
+        or teacher_id is None
+        or not db.scalar(
+            select(Enrollment.id).where(
+                Enrollment.course_id == course_id,
+                Enrollment.user_id == teacher_id,
+                Enrollment.role == "instructor",
+            )
+        )
+        or not course.published
+        or (lifecycle and lifecycle.archived)
+    ):
+        return []
+    student_ids = list(
+        db.scalars(
+            select(User.id)
+            .join(GoogleIdentity, GoogleIdentity.user_id == User.id)
+            .where(User.role == "student")
+            .order_by(User.id)
+        )
+    )
+    return _enroll_students(db, course_id, student_ids, actor_id)
+
+
 def remove_member(db, course_id, teacher_id, student_id):
     active_course(db, course_id, teacher_id)
     enrolled = db.scalar(
@@ -255,14 +364,11 @@ def add_members(db, course_id, teacher_id, student_ids):
     selected = set(student_ids)
     allowed = {student["id"] for student in roster(teacher_id, db)}
     if not selected <= allowed:
-        raise HTTPException(403, "Chỉ chọn sinh viên đang thuộc lớp bạn quản lý; người mới cần lời mời email.")
-    current = set(db.scalars(select(Enrollment.user_id).where(Enrollment.course_id == course_id)))
-    for student_id in selected - current:
-        db.add(Enrollment(course_id=course_id, user_id=student_id, role="student"))
-        db.flush()
-        copy_lessons(db, course_id, student_id)
-        notify_membership(db, course_id, student_id, teacher_id)
-    return sorted(selected - current)
+        raise HTTPException(
+            403,
+            "Chỉ chọn được sinh viên đã đăng ký bằng Google hoặc đang thuộc lớp bạn quản lý.",
+        )
+    return _enroll_students(db, course_id, selected, teacher_id)
 
 
 def revoke(db, course_id, teacher_id, invite_id):

@@ -14,6 +14,28 @@ from zoneinfo import ZoneInfo
 from src.services.planning_time import block_at
 
 
+def effective_availability(
+    workspace: dict[str, Any],
+    fallback: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the same hard availability envelope for Generate and Accept.
+
+    Once a learner has configured a daily routine, wake/sleep and calendar
+    entries own the hard constraints.  Preferred day-parts and positioned
+    self-study windows only rank otherwise-free time, so the base envelope is
+    the whole week.  Accounts that have not migrated to routine mode retain
+    their legacy availability contract.
+    """
+    routine = workspace.get("routineProfile")
+    if isinstance(routine, dict) and routine.get("sleepTime") and routine.get("wakeTime"):
+        return [
+            {"weekday": weekday, "enabled": True, "start": "00:00", "end": "24:00"}
+            for weekday in range(7)
+        ]
+    saved = workspace.get("availability")
+    return deepcopy(saved if isinstance(saved, list) else (fallback or []))
+
+
 def confirmation_constraints(draft: dict[str, Any], workspace: dict[str, Any], calendar: list[dict[str, Any]]) -> dict[str, Any]:
     """Overlay latest saved personal/sleep constraints and live LMS events."""
     timezone = draft.get("timezone") or "Asia/Ho_Chi_Minh"
@@ -45,8 +67,17 @@ def confirmation_constraints(draft: dict[str, Any], workspace: dict[str, Any], c
             if left < right:
                 slots.append({"date": day.isoformat(), "start": left, "end": right, "source": "lms"})
             day += timedelta(days=1)
-    return {**draft, "input": {**draft.get("input", {}), "unavailable": slots,
-                               **({"availability": workspace["availability"]} if "availability" in workspace else {})}}
+    return {
+        **draft,
+        "input": {
+            **draft.get("input", {}),
+            "unavailable": slots,
+            "availability": effective_availability(
+                workspace,
+                list((draft.get("input") or {}).get("availability") or []),
+            ),
+        },
+    }
 
 
 def work_minutes(block: dict[str, Any], timezone: str) -> int:

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocale } from '../../i18n/LocaleContext';
 import type { PersonalSlotCategory, PreferredTime, RoutineProfile } from '../../types';
 import { normalizeClockInput } from '../../utils/clockInput';
 import type { PlanTimelineItem } from '../../utils/planTimeline';
@@ -38,6 +39,7 @@ export function PersonalSlotDialog({
   onClose: () => void;
   onSubmit: (value: { date: string; start: string; end: string; label: string; category: PersonalSlotCategory }) => void;
 }) {
+  const { locale } = useLocale();
   const [date, setDate] = useState(initialDate);
   const [start, setStart] = useState(initialStart);
   const [end, setEnd] = useState(initialEnd);
@@ -78,7 +80,7 @@ export function PersonalSlotDialog({
         </div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="sm:col-span-2 text-sm font-semibold">Ngày
-            <input type="date" min={minDate} max={maxDate} value={date} onChange={(event) => setDate(event.target.value)} className="mt-1 block h-10 w-full rounded-lg border border-line px-3 font-normal" required />
+            <input type="date" lang={locale === 'en' ? 'en-GB' : 'vi-VN'} min={minDate} max={maxDate} value={date} onChange={(event) => setDate(event.target.value)} className="mt-1 block h-10 w-full rounded-lg border border-line px-3 font-normal" required />
           </label>
           <label className="text-sm font-semibold">Bắt đầu
             <input type="time" step="300" value={start} onChange={(event) => setStart(event.target.value)} className="mt-1 block h-10 w-full rounded-lg border border-line px-3 font-normal" required />
@@ -176,7 +178,7 @@ export function RoutineDialog({ open, value, onClose, onSave }: {
           <Input
             label="Thường thức dậy"
             type="text"
-            inputMode="numeric"
+            inputMode="text"
             autoComplete="off"
             placeholder="07:00"
             maxLength={5}
@@ -188,7 +190,7 @@ export function RoutineDialog({ open, value, onClose, onSave }: {
           <Input
             label="Thường đi ngủ"
             type="text"
-            inputMode="numeric"
+            inputMode="text"
             autoComplete="off"
             placeholder="23:10"
             maxLength={5}

@@ -50,7 +50,7 @@ D. Do — kiểm tra mức hiểu bài
 
 Chọn đơn vị kiến thức → lấy câu hỏi và rubric được duyệt → sinh viên trả lời → tool chấm câu đóng / Understanding Agent phân tích câu mở → kiểm tra schema, bằng chứng và mâu thuẫn → tổng hợp trạng thái.
 
-Understanding Agent trả nhận xét theo từng tiêu chí rubric, kèm đoạn trả lời của sinh viên làm bằng chứng. Node tổng hợp mới chọn một trong bốn trạng thái bạn đã định nghĩa. Nếu bằng chứng ít, mâu thuẫn hoặc ngoài rubric, trạng thái là chưa đủ bằng chứng và có thể tạo mục chờ giảng viên. Không tạo điểm số hay lệnh ghi gradebook. 
+Understanding Agent trích xuất structured planning signal theo từng tiêu chí rubric, kèm đoạn trả lời của sinh viên làm bằng chứng ở backend. Sinh viên không thấy báo cáo chấm chi tiết, điểm chẩn đoán hay confidence; UI chỉ xác nhận đã ghi nhận và đưa câu/hành động tiếp theo. Nếu bằng chứng ít, mâu thuẫn hoặc ngoài rubric, hệ thống hỏi kiểm chứng có giới hạn rồi giữ unknown/abstained, không tạo mục chờ giảng viên cho từng câu trả lời. Không tạo điểm số hay lệnh ghi gradebook.
 
 E. Recover 
 

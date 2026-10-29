@@ -29,10 +29,10 @@ export function CourseMembersPanel({ courseId }: { courseId: string }) {
   const students = (data?.students ?? []).filter(student => student.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   return <section className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-bold">Sinh viên của môn</h3>
-      <p className="text-sm text-muted">Chỉ quản lý thành viên môn này; không hiển thị toàn bộ tài khoản PaceWise.</p></div>
+      <p className="text-sm text-muted">Thêm sinh viên đã đăng ký bằng Google hoặc đã có trong lớp bạn quản lý.</p></div>
       <div className="flex flex-wrap gap-2"><Button variant="secondary" disabled={busy} onClick={() => void perform(async () => {
         const roster = await fetchTeacherRoster(); setChoices(roster.filter(student => !data?.students.some(member => member.id === student.id))); setSelected([]);
-      })}>Thêm từ lớp đang quản lý</Button><Button variant="secondary" loading={busy} onClick={() => void perform(load)}>Làm mới</Button></div></div>
+      })}>Thêm tài khoản Google</Button><Button variant="secondary" loading={busy} onClick={() => void perform(load)}>Làm mới</Button></div></div>
     {error && <p role="alert" className="text-danger-ink">{error}</p>}{notice && <p role="status" className="rounded-xl bg-primary-light p-3 text-sm">{notice}</p>}
     {!data && !error && <p role="status">Đang tải thành viên…</p>}
     <form className="space-y-3 rounded-xl border border-line p-4" onSubmit={event => {
@@ -64,9 +64,9 @@ export function CourseMembersPanel({ courseId }: { courseId: string }) {
       })}>Xác nhận gỡ khỏi môn</Button>
     </Modal>
     <Modal open={choices !== null} title="Chọn sinh viên tham gia" onClose={() => !busy && setChoices(null)}>
-      <p className="mb-3 text-sm text-muted">Chỉ sinh viên từ các lớp bạn quản lý. Người mới đăng ký cần lời mời bằng email.</p>
+      <p className="mb-3 text-sm text-muted">Gồm tất cả sinh viên đã xác minh Google và sinh viên đã có trong các lớp bạn quản lý.</p>
       <div className="max-h-64 overflow-y-auto">{choices?.map(student => <label key={student.id} className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={selected.includes(student.id)} onChange={event => setSelected(event.target.checked ? [...selected, student.id] : selected.filter(id => id !== student.id))} />{student.name}</label>)}</div>
-      {!choices?.length && <p className="mb-3 text-sm text-muted">Không còn sinh viên để thêm từ các lớp hiện tại.</p>}
+      {!choices?.length && <p className="mb-3 text-sm text-muted">Không còn sinh viên phù hợp để thêm vào môn.</p>}
       <Button loading={busy} disabled={!selected.length} onClick={() => void perform(async () => {
         await addKnownCourseStudents(courseId, selected); setChoices(null); await load(); setNotice('Đã thêm những sinh viên được chọn vào môn.');
       })}>Xác nhận thêm sinh viên</Button>

@@ -28,6 +28,7 @@ import type {
   MaterialPreview,
   InstructorWorkspace,
   DurableStudySession, InterruptionReason, LengthFeeling, RhythmReport,
+  DoWorkResult, UnderstandingSelfReport,
 } from '../types';
 import type { QAResult } from '../utils/qa';
 import type { AdaptiveCheckpoint, DelayedProbe } from '../types/adaptiveAssessment';
@@ -102,6 +103,7 @@ export interface StudyTimerCommand {
   action: 'checkpoint' | 'pause' | 'resume' | 'recover' | 'complete' | 'cancel';
   eventKey: string; expectedVersion: number; interruptionReason?: InterruptionReason;
   completionPercent?: number; lengthFeeling?: LengthFeeling; blocker?: DoBlocker; note?: string; outsideMinutes?: number;
+  workResult?: DoWorkResult; additionalMinutes?: number; understandingSelfReport?: UnderstandingSelfReport;
 }
 export const getStudyTimer = (blockId: string) => request<{ session: DurableStudySession | null; activeSession?: DurableStudySession | null }>(`/study-sessions/current?blockId=${encodeURIComponent(blockId)}`);
 export const startStudyTimer = (courseId: string, blockId: string) => request<DurableStudySession>('/study-sessions', { method: 'POST', body: JSON.stringify({ courseId: Number(courseId), blockId }) });
@@ -177,7 +179,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const message = response.status >= 500 ? 'Dịch vụ tạm thời chưa sẵn sàng. Vui lòng thử lại.'
       : code === 'INVALID_CREDENTIALS' ? 'Email hoặc mật khẩu không đúng.'
       : typeof payload.detail === 'string' ? payload.detail
-      : code === 'RATE_LIMITED' && payload.detail?.message ? payload.detail.message : 'Dữ liệu yêu cầu không hợp lệ.';
+      : payload.detail?.message ? payload.detail.message : 'Dữ liệu yêu cầu không hợp lệ.';
     const retry = Number(response.headers.get('Retry-After')) || (typeof payload.detail === 'object' ? payload.detail.retry_after_seconds : undefined) || 0;
     throw new ApiError(code, message, response.headers.get('X-Request-ID') || undefined,
       code === 'RATE_LIMITED' && Number.isFinite(retry) && retry > 0 ? retry : undefined);
@@ -290,6 +292,10 @@ export async function saveInstructorAction(
     method: 'POST',
     body: JSON.stringify({ actionType, entityId, payload }),
   });
+}
+
+export function deleteAssessmentDesign(entityId: string): Promise<{ entityId: string; deleted: boolean; retainedAudit: boolean }> {
+  return request(`/instructor/assessment/${encodeURIComponent(entityId)}`, { method: 'DELETE' });
 }
 
 export interface GoogleCalendarStatus {
@@ -424,11 +430,15 @@ async function runAgent(
   message: string,
   workflow: AgentResponse['workflow'],
   context: Record<string, unknown> = {},
-  options?: { signal?: AbortSignal; history?: Array<{ role: 'user' | 'assistant'; content: string }> },
+  options?: {
+    signal?: AbortSignal;
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    locale?: 'vi' | 'en';
+  },
 ): Promise<AgentResponse> {
   return request<AgentResponse>('/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, workflow, context, qa_history: options?.history ?? [] }),
+    body: JSON.stringify({ message, workflow, locale: options?.locale ?? 'vi', context, qa_history: options?.history ?? [] }),
     signal: options?.signal,
   });
 }
@@ -438,6 +448,7 @@ interface QAStreamOptions {
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   onDelta?: (delta: string) => void;
   onStatus?: (message: string) => void;
+  locale?: 'vi' | 'en';
 }
 
 async function runStreamingQA(
@@ -455,33 +466,57 @@ async function runStreamingQA(
       headers,
       credentials: 'include',
       signal: options.signal,
-      body: JSON.stringify({ message, workflow: 'qa', context, qa_history: options.history ?? [] }),
+      body: JSON.stringify({ message, workflow: 'qa', locale: options.locale ?? 'vi', context, qa_history: options.history ?? [] }),
     });
   } catch (error) {
     if (options.signal?.aborted) throw error;
     throw new ApiError('UPSTREAM', 'Không thể kết nối PaceWise API.');
   }
   if (!response.ok || !response.body) {
-    const payload = (await response.json().catch(() => ({}))) as { detail?: string };
+    const payload = (await response.json().catch(() => ({}))) as {
+      detail?: string | { message?: string; retry_after_seconds?: number };
+    };
     const code = response.status === 401 ? 'UNAUTHENTICATED'
       : response.status === 403 ? 'FORBIDDEN'
       : response.status === 429 || response.status === 503 ? 'RATE_LIMITED'
       : response.status >= 500 ? 'UPSTREAM' : 'UNKNOWN';
-    throw new ApiError(code, payload.detail || 'Chưa thể mở luồng trả lời.',
-      response.headers.get('X-Request-ID') || undefined, Number(response.headers.get('Retry-After')) || undefined);
+    const message = typeof payload.detail === 'string'
+      ? payload.detail
+      : payload.detail?.message || 'Chưa thể mở luồng trả lời.';
+    const retry = Number(response.headers.get('Retry-After'))
+      || (typeof payload.detail === 'object' ? payload.detail.retry_after_seconds : undefined)
+      || 0;
+    throw new ApiError(code, message, response.headers.get('X-Request-ID') || undefined,
+      code === 'RATE_LIMITED' && retry > 0 ? retry : undefined);
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let pending = '';
   let finalResult: AgentResponse | undefined;
-  const consume = (line: string) => {
+  // A provider may place several model deltas in one TCP packet. Without a
+  // paint boundary React batches every setState from that packet and the user
+  // sees the whole answer appear at once even though the server did stream it.
+  // Preserve the provider's text exactly, but give each received delta one
+  // frame to become visible before accepting the final event.
+  const paintBoundary = () => new Promise<void>((resolve) => {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
+      && document.visibilityState !== 'hidden') {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    window.setTimeout(resolve, 0);
+  });
+  const consume = async (line: string) => {
     if (!line.trim()) return;
     const event = JSON.parse(line) as {
       type: 'status' | 'delta' | 'final' | 'error'; message?: string; text?: string;
       result?: AgentResponse; status?: number; detail?: string;
     };
-    if (event.type === 'delta' && event.text) options.onDelta?.(event.text);
+    if (event.type === 'delta' && event.text) {
+      options.onDelta?.(event.text);
+      if (options.onDelta) await paintBoundary();
+    }
     if (event.type === 'status' && event.message) options.onStatus?.(event.message);
     if (event.type === 'final' && event.result) finalResult = event.result;
     if (event.type === 'error') {
@@ -494,10 +529,10 @@ async function runStreamingQA(
     pending += decoder.decode(value, { stream: !done });
     const lines = pending.split('\n');
     pending = lines.pop() ?? '';
-    for (const line of lines) consume(line);
+    for (const line of lines) await consume(line);
     if (done) break;
   }
-  consume(pending);
+  await consume(pending);
   if (!finalResult) throw new ApiError('UPSTREAM', 'Luồng trả lời kết thúc trước khi được kiểm tra.');
   return finalResult;
 }
@@ -638,22 +673,29 @@ export async function confirmRecovery(optionId: string): Promise<void> {
 export async function createReflection(
   answers: [string, string, string],
   progressMetrics: Record<string, unknown>,
+  locale: 'vi' | 'en' = 'vi',
 ): Promise<AgentResponse> {
   const activityReflection = progressMetrics.reflection_scope === 'activity';
   return runAgent(
-    activityReflection
-      ? `Kết quả sau hoạt động: ${answers[0]}\nĐiều hỗ trợ hoặc gây khó khăn: ${answers[1]}\nBước tiếp theo: ${answers[2]}`
-      : `Điều hiệu quả: ${answers[0]}\nNguyên nhân lệch: ${answers[1]}\nĐiều chỉnh tuần sau: ${answers[2]}`,
+    locale === 'en'
+      ? activityReflection
+        ? `Activity outcome: ${answers[0]}\nWhat helped or caused difficulty: ${answers[1]}\nNext step: ${answers[2]}`
+        : `What worked: ${answers[0]}\nReason for plan drift: ${answers[1]}\nAdjustment for next week: ${answers[2]}`
+      : activityReflection
+        ? `Kết quả sau hoạt động: ${answers[0]}\nĐiều hỗ trợ hoặc gây khó khăn: ${answers[1]}\nBước tiếp theo: ${answers[2]}`
+        : `Điều hiệu quả: ${answers[0]}\nNguyên nhân lệch: ${answers[1]}\nĐiều chỉnh tuần sau: ${answers[2]}`,
     'reflect',
     { progress_metrics: progressMetrics, reflection_course_id: (progressMetrics.activity as { course_id?: string } | undefined)?.course_id },
+    { locale },
   );
 }
 
-export async function confirmReflection(scope: 'weekly' | 'activity' = 'weekly', courseId?: string): Promise<AgentResponse> {
+export async function confirmReflection(scope: 'weekly' | 'activity' = 'weekly', courseId?: string, locale: 'vi' | 'en' = 'vi'): Promise<AgentResponse> {
   return runAgent(
     scope === 'activity' ? 'Tôi xác nhận và lưu ghi nhận sau hoạt động này.' : 'Tôi xác nhận điều chỉnh cho tuần sau.',
     'reflect',
     { reflection_course_id: courseId },
+    { locale },
   );
 }
 
@@ -735,11 +777,13 @@ export async function askQuestion(
   history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
   signal?: AbortSignal,
   onDelta?: (delta: string) => void,
+  locale: 'vi' | 'en' = 'vi',
 ): Promise<QAResult> {
   const result = await runStreamingQA(question, {}, {
     history: history.slice(-4).map((turn) => ({ ...turn, content: turn.content.slice(0, 1000) })),
     signal,
     onDelta,
+    locale,
   });
   const sources = result.source_refs.map(toSource);
   return {
@@ -798,7 +842,7 @@ export async function askDoQuestion(input: {
   taskTitle: string;
   objective: string;
   question: string;
-}, onDelta?: (delta: string) => void): Promise<QAResult> {
+}, onDelta?: (delta: string) => void, locale: 'vi' | 'en' = 'vi'): Promise<QAResult> {
   const result = await runStreamingQA(
     input.question,
     {
@@ -807,7 +851,7 @@ export async function askDoQuestion(input: {
       do_task_title: input.taskTitle,
       do_objective: input.objective,
     },
-    { onDelta },
+    { onDelta, locale },
   );
   const sources = result.source_refs.map(toSource);
   return {
@@ -817,6 +861,37 @@ export async function askDoQuestion(input: {
     sources,
     suggestions: [],
   };
+}
+
+export interface DurableDoChatMessage {
+  id: string;
+  role: 'student' | 'assistant';
+  text: string;
+  result?: QAResult;
+}
+
+export async function getDoChatHistory(courseId: string, blockId: string): Promise<DurableDoChatMessage[]> {
+  const payload = await request<{ messages: Array<{
+    id: string;
+    role: 'student' | 'assistant';
+    text: string;
+    kind?: QAResult['kind'];
+    sourceRefs?: AgentResponse['source_refs'];
+  }> }>(`/study-sessions/chat?courseId=${encodeURIComponent(courseId)}&blockId=${encodeURIComponent(blockId)}`);
+  return payload.messages.map((message) => {
+    if (message.role === 'student') return message;
+    const sources = (message.sourceRefs ?? []).map(toSource);
+    return {
+      ...message,
+      result: {
+        kind: message.kind ?? (sources.length ? 'grounded' : 'abstained'),
+        text: message.text,
+        citations: sources.map((source) => source.id),
+        sources,
+        suggestions: [],
+      },
+    };
+  });
 }
 
 export async function assessDoCheckpoint(input: {
@@ -888,16 +963,22 @@ export function getDueAssessmentProbes(courseId: string) {
   return request<DelayedProbe[]>(`/do/assessment/due?course_id=${encodeURIComponent(courseId)}`);
 }
 
-export function adaptiveCheckpointAction(input: { sessionId: string; courseId: string; action: 'hint' | 'answer'; eventKey: string; answer?: string }) {
+export function adaptiveCheckpointAction(input: { sessionId: string; courseId: string; action: 'hint' | 'answer'; eventKey: string; answer?: string; locale?: 'vi' | 'en' }) {
   return request<AdaptiveCheckpoint>(`/do/assessment/${encodeURIComponent(input.sessionId)}/${input.action}`, {
-    method: 'POST', body: JSON.stringify({ course_id: Number(input.courseId), event_key: input.eventKey, answer: input.answer ?? '' }),
+    method: 'POST', body: JSON.stringify({ course_id: Number(input.courseId), event_key: input.eventKey,
+      answer: input.answer ?? '', locale: input.locale ?? 'vi' }),
   });
 }
 
-export async function askHint(): Promise<QAResult> {
+export async function askHint(
+  history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+  locale: 'vi' | 'en' = 'vi',
+): Promise<QAResult> {
   const result = await runAgent(
     'Hãy gợi ý từng bước và đặt câu hỏi Socratic để tôi tự làm, không đưa đáp án hoàn chỉnh.',
     'qa',
+    {},
+    { history: history.slice(-4).map((turn) => ({ ...turn, content: turn.content.slice(0, 1000) })), locale },
   );
   const sources = result.source_refs.map(toSource);
   return {
@@ -972,7 +1053,11 @@ export interface InstructorData {
 }
 
 export async function fetchInstructorData(): Promise<InstructorData> {
-  return request<InstructorData>('/instructor/overview');
+  return request<InstructorData>('/instructor/assessment-designs');
+}
+
+export async function fetchInstructorDashboard(courseId: string): Promise<import('../types').InstructorDashboard> {
+  return request<import('../types').InstructorDashboard>(`/instructor/dashboard?course_id=${encodeURIComponent(courseId)}`);
 }
 
 export function fetchTeacherManagement(courseId: string) {
@@ -1008,6 +1093,9 @@ export function teacherScheduleAction(action: 'preview' | 'demo-preview' | 'seri
 export const fetchTeacherScheduleHistory = () => request<import('../types/teacherManagement').SchedulePreview[]>('/instructor/manage/schedule/history');
 export function writeTeacherManagement(courseId: string, target: string, payload: object, method: 'POST' | 'PUT' = 'POST') {
   return request(`/instructor/manage/courses/${encodeURIComponent(courseId)}/${target}`, { method, body: JSON.stringify(payload) });
+}
+export function deleteTeacherResource(courseId: string, resourceId: number) {
+  return request(`/instructor/manage/courses/${encodeURIComponent(courseId)}/resources/${resourceId}`, { method: 'DELETE' });
 }
 export function fetchTeacherProfile() {
   return request<import('../types/teacherManagement').TeacherProfileData>('/instructor/manage/profile');

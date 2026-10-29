@@ -1,13 +1,17 @@
+import base64
+import io
 import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from openpyxl import Workbook
 from sqlalchemy import delete, func, select, text
 
 from src.config import get_settings
 from src.course_source.db import Base, engine, initialize_database
 from src.course_source.db import SessionLocal as SourceSession
 from src.course_source.models import (
+    Assignment,
     CalendarEvent,
     Course,
     CourseInvitation,
@@ -39,11 +43,12 @@ def membership_source(auth_settings):
             (4, "instructor"),
             (5, "student"),
             (6, "student"),
+            (7, "instructor"),
         ]:
             db.add(
                 User(
                     id=identifier,
-                    email=f"user{identifier}@gmail.com",
+                    email="teacher1@pacewise.edu.vn" if identifier == 1 else f"user{identifier}@gmail.com",
                     full_name=f"User {identifier}",
                     role=role,
                     password_hash="not-a-login",
@@ -81,7 +86,12 @@ def membership_source(auth_settings):
             db.flush()
             db.add(TeachingEventLink(calendar_event_id=identifier, occurrence_key=f"lesson-{identifier}"))
         db.commit()
-    settings = auth_settings.model_copy(update={"course_source_mode": "standalone"})
+    settings = auth_settings.model_copy(
+        update={
+            "course_source_mode": "standalone",
+            "google_signup_auto_enroll_teacher_email": "teacher1@pacewise.edu.vn",
+        }
+    )
     app.dependency_overrides[get_settings] = lambda: settings
     yield settings
 
@@ -277,16 +287,102 @@ async def test_per_actor_rate_limit_is_persistent_and_invalid_attempts_are_charg
 
 
 @pytest.mark.asyncio
-async def test_create_course_can_invite_new_students_without_any_existing_enrollment(client, membership_source):
+async def test_create_course_auto_enrolls_google_students_without_invitations(client, membership_source):
     headers = sign_in(client, membership_source, 1)
     result = await client.post(
         "/api/v1/instructor/manage/courses",
         headers=headers,
-        json={"code": "NEW", "name": "New course", "invite_emails": ["user5@gmail.com"]},
+        json={"code": "DB201", "name": "New course", "invite_emails": ["user5@gmail.com"]},
     )
     assert result.status_code == 201, result.text
     members = await client.get(f"/api/v1/instructor/manage/courses/{result.json()['id']}/members")
-    assert members.json()["students"] == [] and len(members.json()["invitations"]) == 1
+    assert members.json()["students"] == [
+        {"id": 2, "name": "User 2"},
+        {"id": 3, "name": "User 3"},
+        {"id": 5, "name": "User 5"},
+    ]
+    assert members.json()["invitations"] == []
+
+
+@pytest.mark.asyncio
+async def test_other_teacher_course_stays_isolated_and_keeps_manual_invites(client, membership_source):
+    headers = sign_in(client, membership_source, 4)
+    result = await client.post(
+        "/api/v1/instructor/manage/courses",
+        headers=headers,
+        json={"code": "OTHER201", "name": "Other teacher course", "invite_emails": ["user5@gmail.com"]},
+    )
+    assert result.status_code == 201, result.text
+    members = await client.get(f"/api/v1/instructor/manage/courses/{result.json()['id']}/members")
+    assert members.status_code == 200
+    assert members.json()["students"] == []
+    assert [(item["email"], item["status"]) for item in members.json()["invitations"]] == [
+        ("user5@gmail.com", "pending")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_new_instructor_can_bootstrap_first_course_from_excel(client, membership_source):
+    from src.services.teacher_workbook import HEADERS
+
+    headers = sign_in(client, membership_source, 7)
+    assert (await client.get("/api/v1/instructor/manage/courses")).json() == []
+    assert (await client.get("/api/v1/instructor/manage/profile")).status_code == 200
+
+    book = Workbook()
+    courses = book.active
+    courses.title = "Courses"
+    courses.append(HEADERS["Courses"])
+    courses.append(["DSA201", "Bootstrap from Excel", "Demo"])
+    lessons = book.create_sheet("Lessons")
+    lessons.append(HEADERS["Lessons"])
+    lessons.append(["DSA201", "First class", "2020-10-12", "09:00", "10:00", 1, "offline", "A101", ""])
+    tasks = book.create_sheet("Tasks")
+    tasks.append(HEADERS["Tasks"])
+    tasks.append(["DSA201", "Historical assignment", "assignment", "2020-10-13T23:59:00+07:00", 10, True, "Demo", "Bài tập"])
+    weights = book.create_sheet("Weights")
+    weights.append(HEADERS["Weights"])
+    weights.append(["DSA201", "Bài tập", 100])
+    stream = io.BytesIO()
+    book.save(stream)
+
+    preview = await client.post(
+        "/api/v1/instructor/manage/schedule/import-preview",
+        headers=headers,
+        json={"data_base64": base64.b64encode(stream.getvalue()).decode(), "mode": "append"},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["counts"]["courses"] == 1
+    assert preview.json()["counts"]["historical_lessons"] == 1
+    assert preview.json()["counts"]["tasks"] == 1
+    assert preview.json()["errors"] == []
+
+    confirmed = await client.post(
+        "/api/v1/instructor/manage/schedule/confirm",
+        headers=headers,
+        json={"ticket": preview.json()["ticket"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["applied"] is True
+    assert [item["code"] for item in (await client.get("/api/v1/instructor/manage/courses")).json()] == ["DSA201"]
+    with SourceSession() as db:
+        course_id = db.scalar(select(Course.id).where(Course.code == "DSA201"))
+        assert db.scalar(select(Assignment).where(Assignment.course_id == course_id).where(Assignment.title == "Historical assignment"))
+        assert not db.scalar(
+            select(func.count()).select_from(Enrollment).where(
+                Enrollment.course_id == course_id,
+                Enrollment.role == "student",
+            )
+        )
+        assert not set(
+            db.scalars(
+                select(CalendarEvent.user_id).where(
+                    CalendarEvent.course_id == course_id,
+                    CalendarEvent.title == "First class",
+                    CalendarEvent.user_id.in_([2, 3, 5]),
+                )
+            )
+        ) == {2, 3, 5}
 
 
 def test_membership_invalidation_targets_only_affected_user_even_when_they_have_no_courses():
@@ -310,17 +406,37 @@ def test_membership_invalidation_targets_only_affected_user_even_when_they_have_
 
 
 @pytest.mark.asyncio
-async def test_known_student_addition_is_limited_to_owned_roster_and_copies_lessons(client, membership_source):
+async def test_google_student_directory_allows_cross_course_and_new_students_but_rejects_native_accounts(
+    client, membership_source
+):
     headers = sign_in(client, membership_source, 1)
-    # No global-directory assignment: user 3 is only in another teacher's course.
+    roster_response = await client.get("/api/v1/instructor/manage/roster", headers=headers)
+    assert roster_response.status_code == 200
+    assert roster_response.json() == [
+        {"id": 2, "name": "User 2"},
+        {"id": 3, "name": "User 3"},
+        {"id": 5, "name": "User 5"},
+    ]
+
+    # User 3 belongs to another teacher's course, while user 5 has no course.
+    # Both are verified Google students and can be selected in demo mode.
+    for student_id in [3, 5]:
+        result = await client.post(
+            "/api/v1/instructor/manage/courses/1/members/add",
+            headers=headers,
+            json={"student_ids": [student_id]},
+        )
+        assert result.status_code == 200 and result.json()["added"] == 1
+
+    # User 6 is a native/password student without a verified Google identity.
     assert (
-        await client.post("/api/v1/instructor/manage/courses/1/members/add", headers=headers, json={"student_ids": [3]})
+        await client.post("/api/v1/instructor/manage/courses/1/members/add", headers=headers, json={"student_ids": [6]})
     ).status_code == 403
     created = await client.post(
-        "/api/v1/instructor/manage/courses", headers=headers, json={"code": "NEW", "name": "New"}
+        "/api/v1/instructor/manage/courses", headers=headers, json={"code": "OOPCPP201", "name": "New"}
     )
     identifier = created.json()["id"]
-    for expected in [1, 0]:
+    for expected in [0, 0]:
         result = await client.post(
             f"/api/v1/instructor/manage/courses/{identifier}/members/add", headers=headers, json={"student_ids": [2]}
         )

@@ -1,12 +1,12 @@
 # Evaluation evidence — 04/10/2026
 
-Cập nhật 10/10: [Demo một web — LMS Docker nội bộ](pacewise-only-demo-evaluation-2026-10-10.md) — 684 backend, 319 frontend, 87 simulator tests pass; browser thật hai role login/data/logout pass, không request web LMS. Giữ nguyên database/uploads; chưa deploy cloud.
+Cập nhật 10/10: Demo một web — LMS Docker nội bộ — 684 backend, 319 frontend, 87 simulator tests pass; browser thật hai role login/data/logout pass, không request web LMS. Giữ nguyên database/uploads; chưa deploy cloud.
 
-Cập nhật 10/10: [Nhịp cá nhân theo môn và hoạt động](activity-rhythm-evaluation-2026-10-10.md) — 659 backend, 305 frontend test pass; 16 browser checks. Xác nhận preference không tự đổi plan, chưa có pilot để khẳng định hiệu quả học.
+Cập nhật 10/10: Nhịp cá nhân theo môn và hoạt động — 659 backend, 305 frontend test pass; 16 browser checks. Xác nhận preference không tự đổi plan, chưa có pilot để khẳng định hiệu quả học.
 
-KPI cập nhật ngày 09/10: [Kế hoạch ban đầu/hiện tại + evidence + so sánh nộp đúng hạn](learning-kpis-evaluation-2026-10-09.md) — backend 593, frontend 220 test pass; đã rebuild Docker và kiểm tra HTTP hai role. Không coi timer là bằng chứng, không tạo lịch sử tiến độ trước PaceWise giả.
+KPI cập nhật ngày 09/10: Kế hoạch ban đầu/hiện tại + evidence + so sánh nộp đúng hạn — backend 593, frontend 220 test pass; đã rebuild Docker và kiểm tra HTTP hai role. Không coi timer là bằng chứng, không tạo lịch sử tiến độ trước PaceWise giả.
 
-Kết quả cập nhật ngày 09/10: [Tổng quan giảng viên + Google Calendar pool/cache/export](teacher-overview-calendar-evaluation-2026-10-09.md) — backend 560, frontend 217 test pass; có Docker/PostgreSQL HTTP smoke cho hai role. Các số liệu phía dưới là evidence lịch sử ngày 04/10.
+Kết quả cập nhật ngày 09/10: Tổng quan giảng viên + Google Calendar pool/cache/export — backend 560, frontend 217 test pass; có Docker/PostgreSQL HTTP smoke cho hai role. Các số liệu phía dưới là evidence lịch sử ngày 04/10.
 
 Đây là bằng chứng **được chạy lại trên code hiện tại**, không tái sử dụng kết luận của bản 03/10. Các case dưới đây được kích hoạt thủ công bằng CLI/HTTP/SQL và ghi lại output thực tế.
 
@@ -240,23 +240,23 @@ npm.cmd run build
 
 ### Bổ sung 10/10/2026 — nhiệm vụ quá hạn và clock Plan
 
-Đã tách overdue chưa hoàn thành khỏi capacity tương lai, chuyển UI Plan sang giờ thật và sửa serializer UTC của LMS simulator. Lịch sử/evidence vẫn giữ để Reflect và cá nhân hóa có điều kiện; không coi qua hạn là đã học xong. Phạm vi, test và giới hạn bằng chứng ở [Expired planning evaluation](expired-planning-evaluation-2026-10-10.md).
+Đã tách overdue chưa hoàn thành khỏi capacity tương lai, chuyển UI Plan sang giờ thật và sửa serializer UTC của LMS simulator. Lịch sử/evidence vẫn giữ để Reflect và cá nhân hóa có điều kiện; không coi qua hạn là đã học xong.
 
 ### Bổ sung 10/10/2026 — xác nhận phần lịch hợp lệ
 
-Đã tách capacity shortfall khỏi lỗi ca học: cho review/xác nhận phần được backend kiểm tra, giữ phần việc thiếu và cảnh báo; không bỏ qua deadline/dependency, không tự giảm estimate. Lịch đang dùng không bị bản nháp thay thế trước xác nhận. Kết quả regression và browser, cùng giới hạn fixture/pilot, nằm ở [Partial plan confirmation evaluation](partial-plan-confirmation-evaluation-2026-10-10.md).
+Đã tách capacity shortfall khỏi lỗi ca học: cho review/xác nhận phần được backend kiểm tra, giữ phần việc thiếu và cảnh báo; không bỏ qua deadline/dependency, không tự giảm estimate. Lịch đang dùng không bị bản nháp thay thế trước xác nhận.
 
 ### Bổ sung 10/10/2026 — bỏ thao tác lịch trùng
 
-Đã bỏ nút/menu “Thêm vào lịch”, form ca tự học thừa và dropdown ưu tiên cá nhân; giữ panel hiện có và lịch đã lưu. **659 backend / 306 frontend / 31 calendar browser checks pass**. Chi tiết phạm vi và lỗi Settings 320px ngoài phạm vi nằm ở [Student calendar simplification](student-calendar-simplification-2026-10-10.md).
+Đã bỏ nút/menu “Thêm vào lịch”, form ca tự học thừa và dropdown ưu tiên cá nhân; giữ panel hiện có và lịch đã lưu. **659 backend / 306 frontend / 31 calendar browser checks pass**.
 
 ### Bổ sung 10/10/2026 — nhịp học và độ tin cậy phiên
 
-Đã thêm timer checkpoint backend, retry/version chống trùng, Reflect ngắn, đề xuất nhịp bằng rule có nguồn và xác nhận, scheduler giữ tổng công việc và tính nghỉ/checkpoint. Estimate không pooling lịch sử khác bài/môn hay tăng thời lượng từ gián đoạn. Báo cáo, acceptance tests, output và giới hạn pilot nằm ở [Study rhythm evaluation](study-rhythm-evaluation-2026-10-10.md).
+Đã thêm timer checkpoint backend, retry/version chống trùng, Reflect ngắn, đề xuất nhịp bằng rule có nguồn và xác nhận, scheduler giữ tổng công việc và tính nghỉ/checkpoint. Estimate không pooling lịch sử khác bài/môn hay tăng thời lượng từ gián đoạn.
 
 ### Bổ sung 09/10/2026 — học liệu do LMS quản lý
 
-Đã kiểm thử tự động lifecycle upload PDF → đồng bộ/index → cập nhật → thu hồi quyền → xóa, cùng UI trạng thái và proxy PDF. **411 backend / 159 frontend / 14 LMS simulator tests pass**. Các ca, raw JUnit và giới hạn nằm ở [LMS materials sync evaluation](lms-materials-sync-evaluation.md). Đây không phải manual browser evidence hoặc xác nhận Canvas production.
+Đã kiểm thử tự động lifecycle upload PDF → đồng bộ/index → cập nhật → thu hồi quyền → xóa, cùng UI trạng thái và proxy PDF. **411 backend / 159 frontend / 14 LMS simulator tests pass**. Đây không phải manual browser evidence hoặc xác nhận Canvas production.
 
 - Các test trên chứng minh logic và integration chạy đúng với fixture/simulator hiện tại; chưa chứng minh KPI nộp đúng hạn ngoài thực tế.
 - Chưa chạy tải 1000 sinh viên; phạm vi demo hiện tại chỉ cần kiểm tra vài phiên đồng thời.

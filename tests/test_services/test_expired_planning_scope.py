@@ -28,7 +28,7 @@ def test_expired_work_cannot_consume_future_capacity_or_become_complete():
     assert all(m['milestoneId'] != 'old-m' for m in result['milestones'])
     assert result['expiredTasks'][0]['remainingMin'] == 540
     assert result['expiredTasks'][0]['status'] == 'overdue_unresolved'
-    assert next(b for b in result['blocks'] if b['id'] == 'old')['status'] == 'history'
+    assert all(block['id'] != 'old' for block in result['blocks'])
     assert (plan_input, assignments) == original
 
 

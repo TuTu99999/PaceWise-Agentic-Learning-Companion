@@ -25,4 +25,10 @@ describe('calendar draft persistence', () => {
     expect(updated.plan).toEqual(plan);
     expect(updated.planDraft).toEqual(draft);
   });
+
+  it('marks the future plan for re-analysis after learning or self-check evidence', () => {
+    const marked = reducer({ ...initialState, plan }, { type: 'MARK_PLAN_NEEDS_ANALYSIS' });
+    expect(marked.plan).toEqual(plan);
+    expect(marked.calendarDraft).toMatchObject({ blocks: plan.blocks, needsAnalysis: true });
+  });
 });

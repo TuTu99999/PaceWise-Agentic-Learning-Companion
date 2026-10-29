@@ -68,15 +68,13 @@ export function DashboardPage() {
           <CardHeader id="lms-impact-title" title={planImpact.title} subtitle="Thay đổi mới từ LMS · kế hoạch chưa bị sửa tự động" />
           <p>{planImpact.message}</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            {planImpact.kind === 'assignment_removed' ? (
-              <Button onClick={() => dispatch({ type: 'APPLY_PLAN_IMPACT', impactId: planImpact.id })}>Xác nhận gỡ {planImpact.affectedBlockIds.length} block cũ</Button>
-            ) : planImpact.taskId && planImpact.courseId && planImpact.deficitMin > 0 ? (
-              <ButtonLink to={replanHref('lms', { taskId: planImpact.taskId, courseId: planImpact.courseId, impactId: planImpact.id })}>
-                Xem bản điều chỉnh
-              </ButtonLink>
-            ) : (
-              <ButtonLink to="/plan" variant="soft">Mở kế hoạch hiện tại</ButtonLink>
-            )}
+            <ButtonLink to={replanHref('lms', {
+              impactId: planImpact.id,
+              taskId: planImpact.taskId,
+              courseId: planImpact.courseId,
+            })}>
+              AI phân tích lại
+            </ButtonLink>
             <Button variant="secondary" onClick={() => dispatch({ type: 'DISMISS_PLAN_IMPACT', impactId: planImpact.id })}>Bỏ qua đề xuất</Button>
           </div>
         </Card>

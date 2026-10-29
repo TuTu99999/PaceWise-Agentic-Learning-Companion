@@ -6,14 +6,16 @@ import { Icon } from '../ui/Icon';
 import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
 import { useToast } from '../ui/Toast';
+import { useLocale } from '../../i18n/LocaleContext';
 
 export function Citation({ index, source, onOpen }: { index: number; source: Source; onOpen: (s: Source) => void }) {
+  const { locale } = useLocale();
   return (
     <div className="group flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 rounded-xl border border-line bg-white p-3 hover:border-primary-dark/40 hover:bg-[#FBFCFF] transition">
       <button
         onClick={() => onOpen(source)}
         className="flex min-w-0 flex-1 items-start gap-3 text-left"
-        aria-label={`Mở đoạn nguồn ${index}: ${source.name}, ${source.location}`}
+        aria-label={locale === 'en' ? `Open source excerpt ${index}: ${source.name}, ${source.location}` : `Mở đoạn nguồn ${index}: ${source.name}, ${source.location}`}
       >
         <span className="flex h-7 min-w-[28px] items-center justify-center rounded-lg bg-primary-light text-xs font-bold text-primary-ink">
           {index}
@@ -38,10 +40,10 @@ export function Citation({ index, source, onOpen }: { index: number; source: Sou
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-medium text-ink hover:border-primary-dark hover:bg-primary-light/40 transition"
-            title="Xem tài liệu trong tab mới"
+            title={locale === 'en' ? 'Open the document in a new tab' : 'Xem tài liệu trong tab mới'}
           >
             <Icon name="arrowRight" size={14} className="text-primary-dark" />
-            <span>Xem file</span>
+            <span>{locale === 'en' ? 'Open file' : 'Xem file'}</span>
           </a>
         )}
 
@@ -49,7 +51,7 @@ export function Citation({ index, source, onOpen }: { index: number; source: Sou
           onClick={() => onOpen(source)}
           className="inline-flex items-center gap-1 text-xs font-semibold text-primary-dark hover:underline"
         >
-          Xem đoạn trích <Icon name="arrowRight" size={14} />
+          {locale === 'en' ? 'View excerpt' : 'Xem đoạn trích'} <Icon name="arrowRight" size={14} />
         </button>
       </div>
     </div>
@@ -57,6 +59,7 @@ export function Citation({ index, source, onOpen }: { index: number; source: Sou
 }
 
 export function SourceModal({ source, onClose }: { source: Source | null; onClose: () => void }) {
+  const { locale } = useLocale();
   const toast = useToast();
   const [reporting, setReporting] = useState(false);
 
@@ -78,15 +81,15 @@ export function SourceModal({ source, onClose }: { source: Source | null; onClos
               try {
                 const { disputeId } = await reportCitation(source.id);
                 onClose();
-                toast({ tone: 'info', title: 'Đã ghi nhận phản ánh', description: `Đoạn nguồn tạm không dùng làm căn cứ chính. Mã: ${disputeId}` });
+                toast({ tone: 'info', title: locale === 'en' ? 'Report recorded' : 'Đã ghi nhận phản ánh', description: locale === 'en' ? `This excerpt will not be used as primary evidence for now. ID: ${disputeId}` : `Đoạn nguồn tạm không dùng làm căn cứ chính. Mã: ${disputeId}` });
               } catch {
-                toast({ tone: 'danger', title: 'Chưa thể gửi phản ánh', description: 'Vui lòng thử lại sau.' });
+                toast({ tone: 'danger', title: locale === 'en' ? 'Could not send the report' : 'Chưa thể gửi phản ánh', description: locale === 'en' ? 'Please try again later.' : 'Vui lòng thử lại sau.' });
               } finally {
                 setReporting(false);
               }
             }}
           >
-            Báo nguồn sai
+            {locale === 'en' ? 'Report incorrect source' : 'Báo nguồn sai'}
           </Button>
 
           {source?.downloadUrl && (
@@ -97,12 +100,12 @@ export function SourceModal({ source, onClose }: { source: Source | null; onClos
               className="no-underline"
             >
               <Button variant="secondary" icon="arrowRight">
-                Xem tài liệu ({source.fileName || 'tài liệu gốc'})
+                {locale === 'en' ? `Open document (${source.fileName || 'original document'})` : `Xem tài liệu (${source.fileName || 'tài liệu gốc'})`}
               </Button>
             </a>
           )}
 
-          <Button onClick={onClose}>Quay lại câu trả lời</Button>
+          <Button onClick={onClose}>{locale === 'en' ? 'Back to answer' : 'Quay lại câu trả lời'}</Button>
         </>
       }
     >
@@ -110,14 +113,14 @@ export function SourceModal({ source, onClose }: { source: Source | null; onClos
         <div className="space-y-4">
           {source.sectionTitle && (
             <div className="rounded-xl bg-primary-light/50 p-3 border border-primary/20">
-              <p className="text-xs font-semibold uppercase tracking-wider text-primary-dark">Mục / Phần trong tài liệu:</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary-dark">{locale === 'en' ? 'Document section:' : 'Mục / Phần trong tài liệu:'}</p>
               <p className="mt-1 text-sm font-bold text-ink">{source.sectionTitle}</p>
               <p className="caption mt-0.5 text-muted">{source.location}</p>
             </div>
           )}
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted">Nội dung đoạn trích xuất đối chiếu</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted">{locale === 'en' ? 'Supporting excerpt' : 'Nội dung đoạn trích xuất đối chiếu'}</p>
             <blockquote className="mt-2 rounded-xl border border-[#F2E2A8] bg-[#FFF9E6] px-4 py-3 text-sm leading-relaxed text-ink/90">
               {source.excerpt}
             </blockquote>
@@ -125,13 +128,13 @@ export function SourceModal({ source, onClose }: { source: Source | null; onClos
 
           {source.context && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Ngữ cảnh bổ sung</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted">{locale === 'en' ? 'Additional context' : 'Ngữ cảnh bổ sung'}</p>
               <p className="mt-1 text-muted text-sm">{source.context}</p>
             </div>
           )}
 
           <p className="caption flex items-center gap-2 text-xs text-muted">
-            <Icon name="lock" size={14} /> Câu hỏi bạn đang soạn vẫn được lưu giữ nguyên vẹn.
+            <Icon name="lock" size={14} /> {locale === 'en' ? 'Your draft question remains unchanged.' : 'Câu hỏi bạn đang soạn vẫn được lưu giữ nguyên vẹn.'}
           </p>
         </div>
       )}

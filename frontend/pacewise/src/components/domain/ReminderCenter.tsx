@@ -14,8 +14,9 @@ import {
   getCurrentSession,
   type MyCourseInvitation,
 } from '../../services/api';
+import { useLocale, type Locale } from '../../i18n/LocaleContext';
 
-const formatTime = (value: string) => new Date(value).toLocaleString('vi-VN', {
+const formatTime = (value: string, locale: Locale) => new Date(value).toLocaleString(locale === 'en' ? 'en-GB' : 'vi-VN', {
   hour: '2-digit',
   minute: '2-digit',
   day: '2-digit',
@@ -26,6 +27,7 @@ const formatTime = (value: string) => new Date(value).toLocaleString('vi-VN', {
 const tone = (item: Reminder) => item.urgency === 'critical' ? 'danger' : item.urgency === 'urgent' ? 'warning' : 'primary';
 
 export function ReminderCenter({ compact = false }: { compact?: boolean }) {
+  const { locale } = useLocale();
   const { state, dispatch } = useAppStore();
   const toast = useToast();
   const [clock, setClock] = useState(() => Date.now());
@@ -122,7 +124,7 @@ export function ReminderCenter({ compact = false }: { compact?: boolean }) {
     <li key={invite.id} className="rounded-xl border border-primary/30 bg-primary-light/40 px-3 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone="primary">Lời mời môn học</Badge>
-        <span className="caption ml-auto">Hạn {formatTime(invite.expiresAt)}</span>
+        <span className="caption ml-auto">Hạn {formatTime(invite.expiresAt, locale)}</span>
       </div>
       <p className="mt-1.5 text-sm font-semibold">{invite.code} · {invite.name}</p>
       <p className="mt-0.5 text-xs text-muted">{invite.teacher}{invite.term ? ` · ${invite.term}` : ''}</p>
@@ -209,7 +211,7 @@ export function ReminderCenter({ compact = false }: { compact?: boolean }) {
                   <li key={item.id} className="rounded-xl border border-line px-3 py-3">
                     <div className="flex items-center gap-2">
                       <Badge tone={tone(item)}>{item.urgency === 'critical' ? 'Khẩn' : item.urgency === 'urgent' ? 'Cần chú ý' : 'Sắp tới'}</Badge>
-                      <span className="caption ml-auto">{formatTime(item.scheduledAt)}</span>
+                      <span className="caption ml-auto">{formatTime(item.scheduledAt, locale)}</span>
                     </div>
                     <p className="mt-1.5 text-sm font-semibold">{item.title}</p>
                     <p className="mt-0.5 text-xs text-muted">{item.message}</p>
@@ -288,7 +290,7 @@ export function ReminderCenter({ compact = false }: { compact?: boolean }) {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge tone={tone(item)}>{item.urgency === 'critical' ? 'Khẩn' : item.urgency === 'urgent' ? 'Cần chú ý' : 'Sắp tới'}</Badge>
-                      <span className="caption">{formatTime(item.scheduledAt)}</span>
+                      <span className="caption">{formatTime(item.scheduledAt, locale)}</span>
                     </div>
                     <p className="mt-1 font-semibold">{item.title}</p>
                     <p className="mt-0.5 text-sm text-muted">{item.message}</p>

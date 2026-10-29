@@ -1,12 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CourseMembersPanel } from './CourseMembersPanel';
-import { fetchCourseMembers, inviteCourseStudents, removeCourseStudent, revokeCourseInvitation } from '../../services/api';
+import { addKnownCourseStudents, fetchCourseMembers, fetchTeacherRoster, inviteCourseStudents, removeCourseStudent, revokeCourseInvitation } from '../../services/api';
 
 vi.mock('../../services/api', () => ({ addKnownCourseStudents: vi.fn(), fetchTeacherRoster: vi.fn(), fetchCourseMembers: vi.fn(), inviteCourseStudents: vi.fn(), removeCourseStudent: vi.fn(), revokeCourseInvitation: vi.fn() }));
 const data = { students: [{ id: 2, name: 'Student' }], invitations: [{ id: 'invite1', email: 'new@gmail.com', status: 'pending' as const, expiresAt: '2026-10-18T12:00:00Z' }] };
 beforeEach(() => {
   vi.clearAllMocks(); vi.mocked(fetchCourseMembers).mockResolvedValue(data);
+  vi.mocked(fetchTeacherRoster).mockResolvedValue([{ id: 2, name: 'Student' }, { id: 3, name: 'New Google Student' }]);
+  vi.mocked(addKnownCourseStudents).mockResolvedValue({ added: 1 });
   vi.mocked(inviteCourseStudents).mockResolvedValue({ invitations: data.invitations, emailSent: false });
   vi.mocked(removeCourseStudent).mockResolvedValue({}); vi.mocked(revokeCourseInvitation).mockResolvedValue({});
 });
@@ -35,5 +37,13 @@ describe('course-scoped student management', () => {
     render(<CourseMembersPanel courseId="1" />); await screen.findByText('Student');
     fireEvent.click(screen.getByRole('button', { name: 'Hủy lời mời' }));
     await waitFor(() => expect(revokeCourseInvitation).toHaveBeenCalledExactlyOnceWith('1', 'invite1'));
+  });
+  it('adds any registered Google student who is not already in the course', async () => {
+    render(<CourseMembersPanel courseId="1" />); await screen.findByText('Student');
+    fireEvent.click(screen.getByRole('button', { name: 'Thêm tài khoản Google' }));
+    fireEvent.click(await screen.findByLabelText('New Google Student'));
+    expect(screen.queryByLabelText('Student')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Xác nhận thêm sinh viên' }));
+    await waitFor(() => expect(addKnownCourseStudents).toHaveBeenCalledExactlyOnceWith('1', [3]));
   });
 });

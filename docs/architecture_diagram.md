@@ -1,6 +1,6 @@
 # PaceWise architecture and data flow
 
-Tài liệu này mô tả kiến trúc đang chạy trong repository, không phải kiến trúc dự kiến. Mốc kiểm chứng: **04/10/2026**.
+Tài liệu này mô tả kiến trúc đang chạy trong repository, không phải kiến trúc dự kiến. Mốc kiểm chứng: **18/10/2026**.
 
 ## 1. Component diagram
 
@@ -8,7 +8,7 @@ Tài liệu này mô tả kiến trúc đang chạy trong repository, không ph�
 flowchart LR
     subgraph Client["Browser"]
         UI["React + TypeScript\nPlan · Do · Reflect"]
-        Instructor["Instructor UI\nOverview · Review"]
+        Instructor["Instructor UI\nOverview · Question design"]
     end
 
     subgraph PaceWise["PaceWise"]
@@ -96,16 +96,21 @@ sequenceDiagram
     S->>UI: thêm Ăn/Ngủ/Bận/Tự học, ưu tiên và giờ sinh hoạt
     UI->>DB: PUT workspace (version + CSRF)
     S->>UI: AI lập kế hoạch
-    UI->>API: goal + workload + availability + constraints
+    UI->>API: goal + workload + availability + constraints + earliest_start_at
     API-->>UI: milestone + study block + capacity + assumptions
     S->>UI: xem trước, chỉnh, Áp dụng kế hoạch
     UI->>DB: lưu plan đã xác nhận
     S->>UI: mở study block
+    UI->>API: kiểm tra block đã qua earliest_start_at
     UI->>API: bắt đầu/kết thúc Do, actual time, blocker
     API->>Q: retrieval học liệu đã ingest
     Q-->>API: passages có metadata nguồn
     API-->>UI: gợi ý tài liệu / trả lời có citation hoặc từ chối
     UI->>DB: session + evaluation
+    S->>UI: trả lời Self-check đã được giảng viên thiết kế
+    UI->>API: câu trả lời tự luận
+    API->>DB: assessment signal có cấu trúc
+    API-->>UI: đánh dấu phần lịch tương lai cần phân tích lại
     S->>UI: Reflect sau hoạt động hoặc cuối tuần
     UI->>API: plan so với actual + câu trả lời phản tư
     API-->>UI: tóm tắt + một điều chỉnh đề xuất

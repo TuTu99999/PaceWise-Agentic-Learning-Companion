@@ -1,15 +1,27 @@
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import text
+from sqlalchemy import delete, func, select, text
 
 from src.api.google_signup import _account
 from src.config import get_settings
+from src.course_source.db import Base as CourseBase
 from src.course_source.db import SessionLocal as CourseSession
 from src.course_source.db import engine, initialize_database
-from src.course_source.models import GoogleIdentity, User
+from src.course_source.models import (
+    Assignment,
+    CalendarEvent,
+    Course,
+    CourseLifecycle,
+    Enrollment,
+    GoogleIdentity,
+    Resource,
+    TeachingEventLink,
+    User,
+)
 from src.db import SessionLocal
 from src.main import app
 from src.persistence_models import GoogleCalendarConnection
@@ -20,10 +32,9 @@ from src.services.google_calendar import GoogleCalendarError, OAuthTokens
 def signup(auth_settings, monkeypatch):
     assert engine.dialect.name == "sqlite"
     initialize_database()
-    with CourseSession() as db:
-        db.query(GoogleIdentity).delete()
-        db.query(User).filter(User.email.in_(["new@gmail.com", "existing@gmail.com"])).delete()
-        db.commit()
+    with engine.begin() as connection:
+        for table in reversed(CourseBase.metadata.sorted_tables):
+            connection.execute(delete(table))
     settings = auth_settings.model_copy(
         update={
             "course_source_mode": "standalone",
@@ -145,3 +156,118 @@ def test_verified_identity_reuses_account(signup):
     first, _ = _account(profile)
     second, _ = _account(profile)
     assert first["sub"] == second["sub"]
+
+
+def test_verified_google_student_receives_active_course_schedule_tasks_and_pdf_access(signup):
+    now = datetime.now(UTC)
+    with CourseSession() as db:
+        teacher = User(
+            id=100,
+            email="teacher@example.edu",
+            full_name="Demo teacher",
+            role="instructor",
+            password_hash="not-a-login",
+        )
+        other_teacher = User(
+            id=101,
+            email="other-teacher@example.edu",
+            full_name="Other teacher",
+            role="instructor",
+            password_hash="not-a-login",
+        )
+        active = Course(id=100, code="AUTO101", name="Demo active", term="Demo", color="#4169e1", published=True)
+        archived = Course(id=101, code="OLD101", name="Demo archived", term="Demo", color="#4169e1", published=True)
+        hidden = Course(id=102, code="HIDDEN101", name="Demo hidden", term="Demo", color="#4169e1", published=False)
+        excluded = Course(id=103, code="CS101", name="Incomplete demo", term="Demo", color="#4169e1", published=True)
+        db.add_all([teacher, other_teacher, active, archived, hidden, excluded])
+        db.flush()
+        db.add_all(
+            [
+                Enrollment(user_id=teacher.id, course_id=active.id, role="instructor"),
+                Enrollment(user_id=teacher.id, course_id=archived.id, role="instructor"),
+                Enrollment(user_id=teacher.id, course_id=hidden.id, role="instructor"),
+                Enrollment(user_id=other_teacher.id, course_id=excluded.id, role="instructor"),
+                CourseLifecycle(course_id=active.id, archived=False),
+                CourseLifecycle(course_id=archived.id, archived=True),
+                CourseLifecycle(course_id=hidden.id, archived=False),
+                CourseLifecycle(course_id=excluded.id, archived=False),
+                Resource(course_id=active.id, title="Slide demo.pdf", kind="file", source_url="/files/slide-demo.pdf"),
+                Assignment(
+                    course_id=active.id,
+                    title="Bài tập demo",
+                    description="Demo",
+                    due_at=now + timedelta(days=2),
+                    points_possible=10,
+                    published=True,
+                ),
+            ]
+        )
+        lesson = CalendarEvent(
+            user_id=teacher.id,
+            course_id=active.id,
+            title="Lịch học demo",
+            starts_at=now + timedelta(days=1),
+            ends_at=now + timedelta(days=1, hours=2),
+            event_kind="class",
+            attendance_status="scheduled",
+        )
+        db.add(lesson)
+        db.flush()
+        db.add(TeachingEventLink(calendar_event_id=lesson.id, occurrence_key="auto-demo-lesson"))
+        db.commit()
+
+    settings = signup.model_copy(
+        update={
+            "google_signup_auto_enroll_courses": True,
+            "google_signup_auto_enroll_teacher_email": "teacher@example.edu",
+        }
+    )
+    profile = {
+        "sub": "auto-enroll-subject",
+        "email": "new@gmail.com",
+        "name": "New student",
+        "email_verified": True,
+    }
+    claims, courses = _account(profile, settings)
+    _, repeated_courses = _account(profile, settings)
+
+    assert courses == [100] and repeated_courses == [100]
+    assert claims["course_id"] == 100
+    with CourseSession() as db:
+        student_id = int(claims["sub"])
+        assert db.scalar(
+            select(func.count()).select_from(Enrollment).where(
+                Enrollment.user_id == student_id,
+                Enrollment.course_id == 100,
+                Enrollment.role == "student",
+            )
+        ) == 1
+        assert db.scalar(
+            select(func.count()).select_from(CalendarEvent).where(
+                CalendarEvent.user_id == student_id,
+                CalendarEvent.course_id == 100,
+                CalendarEvent.title == "Lịch học demo",
+            )
+        ) == 1
+        # Resources and tasks remain single course-owned records; enrollment is
+        # the ACL that makes the slide/PDF and assignment visible to the student.
+        assert db.scalar(select(Resource.id).where(Resource.course_id == 100)) is not None
+        assert db.scalar(select(Assignment.id).where(Assignment.course_id == 100)) is not None
+        assert not db.scalar(
+            select(Enrollment.id).where(
+                Enrollment.user_id == student_id,
+                Enrollment.course_id.in_([101, 102, 103]),
+            )
+        )
+
+        # A later source-teacher import is reconciled on the existing Gmail
+        # student's next sign-in, without any invitation or copied resources.
+        later = Course(id=104, code="FUTURE999", name="Imported later", term="Demo", color="#4169e1", published=True)
+        db.add(later)
+        db.flush()
+        db.add(Enrollment(user_id=teacher.id, course_id=later.id, role="instructor"))
+        db.add(CourseLifecycle(course_id=later.id, archived=False))
+        db.commit()
+
+    _, refreshed_courses = _account(profile, settings)
+    assert refreshed_courses == [100, 104]

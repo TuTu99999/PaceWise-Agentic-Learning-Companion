@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchTeacherManagement, syncCanvas, writeTeacherManagement, ApiError } from '../services/api';
+import { deleteTeacherResource, fetchTeacherManagement, syncCanvas, writeTeacherManagement, ApiError } from '../services/api';
 import { useAppStore } from '../store/AppStore';
 import { useInstructorData } from './useInstructorData';
 import type { TeacherManagementData } from '../types/teacherManagement';
@@ -55,5 +55,10 @@ export function useTeacherManagement(courseId?: string) {
     await writeTeacherManagement(courseId, target, payload, method);
     await refreshAfterMutation();
   };
-  return { data, loading, error, reload, mutate, refreshAfterMutation };
+  const removeResource = async (resourceId: number) => {
+    if (!courseId) throw new Error('Chọn môn học trước.');
+    await deleteTeacherResource(courseId, resourceId);
+    await refreshAfterMutation();
+  };
+  return { data, loading, error, reload, mutate, removeResource, refreshAfterMutation };
 }

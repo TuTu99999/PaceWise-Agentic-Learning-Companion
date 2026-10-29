@@ -162,7 +162,7 @@ describe('PlanCalendarBoard', () => {
     expect(dataTransfer.getData).not.toHaveBeenCalled();
   });
 
-  it('presents read-only LMS task selection and the positioned study block', () => {
+  it('uses the full calendar width without a redundant LMS task selector', () => {
     Object.defineProperty(window, 'PointerEvent', { configurable: true, writable: true, value: MouseEvent });
     const onResizeBlock = vi.fn();
     const onOpenBlock = vi.fn();
@@ -188,10 +188,10 @@ describe('PlanCalendarBoard', () => {
       />,
     );
 
-    expect(screen.getAllByText(/Mini project/).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByLabelText('Chọn nhiệm vụ')).toBeTruthy();
+    expect(screen.getAllByText(/Mini project/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByLabelText('Chọn nhiệm vụ')).not.toBeInTheDocument();
+    expect(screen.queryByText('Nhiệm vụ từ LMS')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Ưu tiên cá nhân cho Mini project')).not.toBeInTheDocument();
-    expect(screen.getByText(/Plan đề xuất thứ tự theo deadline/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Lịch cá nhân' })).toBeTruthy();
     expect(screen.getAllByText('Ăn uống')).toHaveLength(2);
     expect(screen.getByRole('button', { name: /Giờ sinh hoạt/ })).toBeTruthy();
@@ -242,6 +242,13 @@ describe('PlanCalendarBoard', () => {
     const shortEvent = screen.getByTitle('21:03–21:10 · Short lesson');
     expect(parseFloat(shortEvent.style.top)).toBeCloseTo(1684);
     expect(parseFloat(shortEvent.style.height)).toBeCloseTo(9.333333);
+  });
+
+  it('labels a valid AI block that falls outside soft study preferences', () => {
+    render(<PlanCalendarBoard readOnly dates={['2026-10-05']} items={[{ ...item, outsidePreferred: true }]} />);
+
+    expect(screen.getByText('Ngoài khung ưu tiên')).toBeVisible();
+    expect(screen.getByTitle(/Ngoài khung ưu tiên/)).toBeInTheDocument();
   });
 
   it('keeps preferred self-study windows behind study blocks', () => {

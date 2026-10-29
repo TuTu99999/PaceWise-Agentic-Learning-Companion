@@ -94,7 +94,7 @@ jobs:
         shell: powershell
         run: |
           $env:DATABASE_URL = "postgresql+psycopg://pacewise:smoke-only-password@127.0.0.1:$env:CI_POSTGRES_PORT/pacewise_migration_smoke"
-          python -c "import os; from sqlalchemy import create_engine, inspect, text; e=create_engine(os.environ['DATABASE_URL']); i=inspect(e); assert e.connect().execute(text('select version_num from alembic_version')).scalar_one() == '20261012_02'; assert 'pacewise_rag_ingestion_jobs' in i.get_table_names(); assert 'courses' in i.get_table_names(schema='course_source'); assert 'alembic_version' not in i.get_table_names(schema='course_source')"
+          python -c "import os; from alembic.config import Config; from alembic.script import ScriptDirectory; from sqlalchemy import create_engine, inspect, text; e=create_engine(os.environ['DATABASE_URL']); i=inspect(e); database_revision=e.connect().execute(text('select version_num from alembic_version')).scalar_one(); migration_head=ScriptDirectory.from_config(Config('alembic.ini')).get_current_head(); assert database_revision == migration_head, f'database revision {database_revision} != migration head {migration_head}'; assert 'pacewise_rag_ingestion_jobs' in i.get_table_names(); assert 'courses' in i.get_table_names(schema='course_source'); assert 'alembic_version' not in i.get_table_names(schema='course_source')"
           if ($LASTEXITCODE -ne 0) {
             throw "PostgreSQL schema verification failed."
           }
@@ -130,7 +130,24 @@ jobs:
           scripts/benchmark_replan_architecture.py --no-cache
 
       - name: Run backend tests
-        run: python -m pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-fail-under=83
+        shell: powershell
+        run: |
+          # qdrant-client imports a large generated Pydantic model graph. On
+          # the shared Windows runner, importing it after collecting the full
+          # suite can exhaust the process heap. Keep the test and its coverage,
+          # but collect it in a clean process and append the remaining suite.
+          if (Test-Path .coverage) {
+            Remove-Item -LiteralPath .coverage
+          }
+          python -m pytest tests/test_services/test_lms_file_integration.py -v --tb=short --cov=src --cov-report=
+          if ($LASTEXITCODE -ne 0) {
+            throw "Qdrant integration tests failed."
+          }
+          python -m pytest tests/ --ignore=tests/test_services/test_lms_file_integration.py -v --tb=short --cov=src --cov-append --cov-report=
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend tests failed."
+          }
+          python -m coverage report --show-missing --fail-under=83
         env:
           APP_ENV: test
           OPENAI_API_KEY: test-key
@@ -164,7 +181,20 @@ jobs:
         working-directory: frontend/pacewise
 
       - name: Run frontend unit and accessibility tests
-        run: npm.cmd test
+        shell: powershell
+        run: |
+          # A fresh Node process per shard prevents jsdom/Vitest module state
+          # from accumulating until the shared Windows runner exhausts its
+          # V8 heap. Shards run sequentially, so this does not increase peak
+          # memory usage and every frontend test still runs exactly once.
+          $shardCount = 4
+          for ($shard = 1; $shard -le $shardCount; $shard++) {
+            Write-Host "Running frontend test shard $shard/$shardCount"
+            & npm.cmd test -- "--shard=$shard/$shardCount"
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
         working-directory: frontend/pacewise
         env:
           # Keep Node predictable on the shared Windows runner where Docker/WSL
@@ -181,10 +211,41 @@ jobs:
         run: npm.cmd run build
         working-directory: frontend/pacewise
         env:
-          NODE_OPTIONS: --max-old-space-size=1536
+          # TypeScript plus Vite/Rollup exceeds the conservative 1.5 GB test
+          # heap on the Windows runner. This matches Node's normal 64-bit
+          # production-build allowance while tests remain capped at 1.5 GB.
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Audit Python dependencies
-        run: python -m pip_audit --disable-pip --no-deps -r requirements.lock
+        shell: powershell
+        run: |
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            $previousErrorActionPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $auditOutput = & python -m pip_audit `
+              --disable-pip `
+              --require-hashes `
+              --timeout 60 `
+              --progress-spinner off `
+              -r requirements.lock 2>&1
+            $exitCode = $LASTEXITCODE
+            $ErrorActionPreference = $previousErrorActionPreference
+            $auditOutput | ForEach-Object { Write-Host $_ }
+
+            if ($exitCode -eq 0) {
+              exit 0
+            }
+
+            $transientNetworkFailure = ($auditOutput -join "`n") -match `
+              '(?i)(ReadTimeout|ConnectionError|Connection reset|Temporary failure|NameResolutionError|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout)'
+            if (-not $transientNetworkFailure -or $attempt -eq $maxAttempts) {
+              exit $exitCode
+            }
+
+            Write-Warning "pip-audit network request failed on attempt $attempt/$maxAttempts; retrying."
+            Start-Sleep -Seconds (10 * $attempt)
+          }
 
       - name: Audit frontend dependencies
         # The final nginx image contains only static assets, not build/test
@@ -213,7 +274,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build --file "${{ matrix.dockerfile }}" --tag "pacewise-${{ matrix.name }}:${{ github.sha }}" .
+        run: docker build --pull --file "${{ matrix.dockerfile }}" --tag "pacewise-${{ matrix.name }}:${{ github.sha }}" .
 
       - name: Scan image for fixable high and critical vulnerabilities
         shell: powershell

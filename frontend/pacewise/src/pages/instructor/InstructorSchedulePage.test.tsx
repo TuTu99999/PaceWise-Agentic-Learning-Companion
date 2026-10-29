@@ -1,17 +1,16 @@
 import { fireEvent, render as rtlRender, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactElement } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Course, LMSCalendarItem, LMSCourseData } from '../../types';
 import { InstructorSchedulePage } from './InstructorSchedulePage';
+import { LocaleProvider } from '../../i18n/LocaleContext';
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: MemoryRouter });
 
 const fixture = vi.hoisted(() => ({ state: {} as {
   courses: Course[]; courseData: Record<string, LMSCourseData>; workspaceReady: boolean; settings: { staleData: boolean };
 } }));
 vi.mock('../../store/AppStore', () => ({ useAppStore: () => ({ state: fixture.state }) }));
-// Isolate the read-only grid from the independently mounted LMS authoring controller.
-vi.mock('../../components/domain/TeacherLessonManager', () => ({ TeacherLessonManager: () => null }));
 const event = (id: string, courseId: number, title: string): LMSCalendarItem => ({
   id, source_id: courseId, type: 'event', course_id: courseId, course_code: null, title,
   starts_at: '2026-10-05T09:07:00+07:00', ends_at: '2026-10-05T10:22:00+07:00',
@@ -22,6 +21,9 @@ const snapshot = (courseId: string, calendarItems: LMSCalendarItem[]): LMSCourse
 });
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-05T08:00:00+07:00'));
+  window.localStorage.clear();
   fixture.state = {
     courses: [{ id: '1', code: 'CS101', name: 'Python', tone: 'primary' }, { id: '2', code: 'TRR', name: 'Toán rời rạc', tone: 'accent' }],
     courseData: {
@@ -32,7 +34,16 @@ beforeEach(() => {
   };
 });
 
+afterEach(() => vi.useRealTimers());
+
 describe('InstructorSchedulePage read-only calendar', () => {
+  it('renders the dynamic event count and course action in English', () => {
+    window.localStorage.setItem('pacewise-language', 'en');
+    rtlRender(<LocaleProvider><MemoryRouter><InstructorSchedulePage /></MemoryRouter></LocaleProvider>);
+    expect(screen.getByText('Read only · 2 events · Calendar editing and dragging are disabled')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Courses / import Excel' })).toBeInTheDocument();
+  });
+
   it('defaults to all courses and omits every student or editing control', () => {
     render(<InstructorSchedulePage />);
     expect(screen.getByLabelText('Lọc lịch theo môn học')).toHaveValue('all');
@@ -47,6 +58,7 @@ describe('InstructorSchedulePage read-only calendar', () => {
     }
     expect(screen.queryByText('Lịch cá nhân')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Chọn nhiệm vụ')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Quản lý buổi học' })).not.toBeInTheDocument();
     expect(document.querySelectorAll('[draggable="true"]')).toHaveLength(0);
   });
 
@@ -85,6 +97,16 @@ describe('InstructorSchedulePage read-only calendar', () => {
     expect(screen.getByLabelText('Chọn ngày')).toHaveValue('2026-10-15');
     fireEvent.click(screen.getByRole('button', { name: 'Hôm nay' }));
     expect(screen.getByLabelText('Chọn ngày')).toHaveValue('2026-10-05');
+  });
+
+  it('opens on the real Vietnam calendar week instead of the fixed demo week', () => {
+    vi.setSystemTime(new Date('2026-10-16T18:30:00Z'));
+    render(<InstructorSchedulePage />);
+    expect(screen.getByLabelText('Chọn ngày')).toHaveValue('2026-10-17');
+    expect(screen.getByText('12/10–18/10 · GMT+7')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Chọn ngày'), { target: { value: '2026-10-08' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Hôm nay' }));
+    expect(screen.getByLabelText('Chọn ngày')).toHaveValue('2026-10-17');
   });
 
   it('updates displayed events when the synchronized snapshot changes', () => {

@@ -234,10 +234,14 @@ export interface TimeBlock {
   date: string;
   start: Clock;
   end: Clock;
+  /** Server-owned release/prerequisite boundary; the block may be planned now but cannot start before it. */
+  earliestStartAt?: string | null;
   /** Current week is committed; next-week blocks remain a forecast. */
   status?: 'confirmed' | 'tentative' | 'history';
   /** Agent blocks may move on re-analysis; learner-positioned blocks stay pinned. */
   placementSource?: 'agent' | 'student';
+  /** Informational only: this valid block sits outside all soft study preferences. */
+  outsidePreferred?: boolean;
   /** Work and optional extra assessment time; their sum is calendar duration. */
   workMinutes?: number;
   checkpointMinutes?: number;
@@ -318,7 +322,7 @@ export interface PlanInput {
   pinnedBlocks?: TimeBlock[];
   /** Why an existing plan is being repaired; backend policy remains authoritative. */
   replanContext?: {
-    trigger: 'reflection' | 'lms' | 'progress' | 'deadline';
+    trigger: 'reflection' | 'lms' | 'progress' | 'deadline' | 'preferences';
     scope?: 'activity' | 'weekly';
     taskIds: string[];
   };
@@ -488,6 +492,9 @@ export interface StudySession {
   blockId?: string;
   plannedMin?: number;
   completionPercent?: number;
+  remainingMinutes?: number;
+  workResult?: DoWorkResult;
+  understandingSelfReport?: UnderstandingSelfReport;
   outcome?: DoOutcome;
   blocker?: DoBlocker;
   blockerNote?: string;
@@ -495,6 +502,8 @@ export interface StudySession {
 }
 
 export type DoOutcome = 'on_track' | 'completed' | 'needs_more_time' | 'blocked' | 'missed';
+export type DoWorkResult = 'planned_part_done' | 'needs_more_time' | 'blocked';
+export type UnderstandingSelfReport = 'not_reported' | 'can_continue' | 'needs_review' | 'needs_help';
 export type DoBlocker = 'none' | 'knowledge' | 'time' | 'interruption' | 'other';
 
 export interface DoResource {
@@ -533,7 +542,10 @@ export interface DoSessionEvaluation {
   actual_minutes: number;
   variance_minutes: number;
   completion_percent: number;
+  completion_percent_source?: 'derived_from_remaining_minutes' | 'legacy_user_report';
   remaining_minutes: number;
+  work_result?: DoWorkResult | null;
+  understanding_self_report?: UnderstandingSelfReport;
   blocker: DoBlocker;
   blocker_note: string;
   needs_recovery: boolean;
@@ -648,7 +660,9 @@ export interface Drift {
 }
 
 export type PlanImpactKind =
+  | 'course_added'
   | 'schedule_conflict'
+  | 'schedule_changed'
   | 'capacity_released'
   | 'deadline_earlier'
   | 'deadline_later'
@@ -789,6 +803,12 @@ export interface Reflection {
   activityTitle?: string;
   activityKind?: string;
   answers: [string, string, string];
+  activityFeedback?: {
+    understanding: Exclude<UnderstandingSelfReport, 'not_reported'>;
+    blocker: 'none' | 'interruption' | 'difficult' | 'too_long' | 'fatigue' | 'resources';
+    nextAction: 'next_task' | 'continue_task' | 'review' | 'assessment' | 'seek_help';
+    note: string;
+  };
   savedAt: string;
   aiDraft?: Record<string, unknown>;
   aiSummary?: string;
@@ -837,6 +857,67 @@ export interface GroupStats {
     totalStudents: number;
       missingMinutes?: number; // Legacy only; no workload inference from points.
   }>;
+}
+
+export interface InstructorDashboard {
+  summary: { highRisk: number; openWarnings: number; overdue: number };
+  studentAlerts: Array<{
+    id: string;
+    studentId: string;
+    studentName: string;
+    courseId: string;
+    courseCode: string;
+    severity: 'high' | 'warning';
+    overdueCount: number;
+    upcomingCount: number;
+    nearestDueAt: string | null;
+  }>;
+  systemNotices: Array<{
+    id: string;
+    title: string;
+    message: string;
+    at: string;
+    tone: 'warning' | 'danger' | 'info';
+  }>;
+  courses: Array<{
+    id: string;
+    code: string;
+    name: string;
+    term: string;
+    studentCount: number;
+    highRisk: number;
+    openWarnings: number;
+    overdue: number;
+    completionRate: number | null;
+    completionCount: number;
+    completionTotal: number;
+  }>;
+  weeklyCompletion: Array<{
+    week: string;
+    weekNumber: number | null;
+    weekStart: string;
+    weekEnd: string;
+    rate: number | null;
+    count: number;
+    total: number;
+    scheduledTotal: number;
+    taskCount: number;
+    lessonCount: number;
+    status: 'past' | 'current' | 'upcoming' | null;
+  }>;
+  currentWeek: {
+    weekNumber: number | null;
+    weekStart: string;
+    weekEnd: string;
+    rate: number | null;
+    count: number;
+    total: number;
+    scheduledTotal: number;
+    taskCount: number;
+    lessonCount: number;
+  };
+  privacy: { scope: 'individual'; containsDirectIdentifiers: boolean };
+  generatedAt: string;
 }
 
 export interface LearningCycleMetrics {
@@ -907,15 +988,26 @@ export type AssessmentStatus = 'draft' | 'review' | 'approved' | 'rejected';
 
 export interface AssessmentItem {
   id: string;
+  /** Groups the independently stored questions shown as one chapter question set. */
+  assessmentSetId?: string;
   /** Present for the student cross-course workspace; instructor views are already course-scoped. */
   courseId?: string;
   topic: string;
+  assignmentTitle?: string;
+  weekStart?: string;
+  weekEnd?: string;
   question: string;
   rubric: string[];
   status: AssessmentStatus;
   note?: string;
   level?: string;
   source?: string;
+  /** Stable link to the uploaded course file used as assessment evidence. */
+  sourceResourceId?: number;
+  /** Chapter selected from the instructor's course-material library. */
+  sourceChapter?: string;
+  /** Approved course-structure module matched to sourceChapter, when available. */
+  moduleId?: string;
   answerType?: 'open' | 'multiple_choice' | 'boolean' | 'numeric' | 'exact_text';
   knowledgeComponentIds?: string[];
   assessmentStage?: 'recall' | 'explain' | 'why' | 'application' | 'transfer';

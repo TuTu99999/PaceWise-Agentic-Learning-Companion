@@ -41,9 +41,8 @@ vi.mock('../src/routes/instructorRouteLoaders', () => ({
     overview: async () => ({ InstructorOverviewPage: () => <h1>Tổng quan lớp</h1> }),
     schedule: async () => ({ InstructorSchedulePage: () => <h1>Lịch dạy</h1> }),
     courses: async () => ({ InstructorCoursesPage: () => <h1>Môn học</h1> }),
-    assessment: vi.fn(),
+    assessment: async () => ({ AssessmentPage: () => <h1>Thiết kế kiểm chứng</h1> }),
     assessmentEdit: vi.fn(),
-    reviewQueue: async () => ({ ReviewQueuePage: () => <h1>Duyệt kết quả Assessment</h1> }),
   },
 }));
 
@@ -52,14 +51,15 @@ describe('instructor navigation without duplicate LMS feedback', () => {
     render(<MemoryRouter initialEntries={['/instructor/feedback']}><AppRoutes /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Tổng quan lớp' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Phản hồi & can thiệp' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Hàng chờ duyệt' })).toHaveAttribute('href', '/instructor/review');
+    expect(screen.queryByRole('link', { name: 'Hàng chờ duyệt' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Thiết kế kiểm chứng' })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Giảng viên' })).toHaveAttribute('data-icon-only', 'true');
   });
 
-  it('still opens the assessment review queue', async () => {
+  it('redirects the old review queue link to assessment design', async () => {
     render(<MemoryRouter initialEntries={['/instructor/review']}><AppRoutes /></MemoryRouter>);
-    expect(await screen.findByRole('heading', { name: 'Duyệt kết quả Assessment' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Thiết kế kiểm chứng' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Hàng chờ duyệt' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Phản hồi & can thiệp' })).not.toBeInTheDocument();
   });
 
@@ -94,6 +94,6 @@ describe('instructor navigation without duplicate LMS feedback', () => {
     expect(actual.instructorRouteLoaders).not.toHaveProperty('materials');
     expect(actual.instructorRouteLoaders).not.toHaveProperty('courseSetup');
     expect(actual.instructorRouteLoaders).toHaveProperty('overview');
-    expect(actual.instructorRouteLoaders).toHaveProperty('reviewQueue');
+    expect(actual.instructorRouteLoaders).not.toHaveProperty('reviewQueue');
   });
 });

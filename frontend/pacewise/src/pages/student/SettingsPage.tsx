@@ -22,9 +22,10 @@ import { LmsConnectionCard } from '../../components/domain/LmsConnectionCard';
 import { LanguageToggle } from '../../components/domain/LanguageToggle';
 import { useLocale } from '../../i18n/LocaleContext';
 import { downloadBlobFile } from '../../utils/download';
+import { standaloneCourses } from '../../services/courseSource';
 
 export function SettingsPage() {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   useDocumentTitle('Cài đặt');
   const { state, dispatch, persistence } = useAppStore();
   const toast = useToast();
@@ -179,7 +180,9 @@ export function SettingsPage() {
             </div>
             <div>
               <dt className="caption">Nguồn dữ liệu</dt>
-              <dd className="font-medium">{import.meta.env.VITE_COURSE_SOURCE_MODE === 'standalone' ? 'PaceWise · dữ liệu nội bộ' : 'Canvas mô phỏng (chỉ đọc)'}</dd>
+              <dd className="font-medium">{standaloneCourses
+                ? t('PaceWise · dữ liệu nội bộ', 'PaceWise · internal data')
+                : t('Canvas mô phỏng (chỉ đọc)', 'Simulated Canvas (read-only)')}</dd>
             </div>
             <div>
               <dt className="caption">Múi giờ</dt>
@@ -205,7 +208,7 @@ export function SettingsPage() {
               {persistence.status === 'error' && 'Lưu dữ liệu thất bại'}
               {persistence.status === 'conflict' && 'Dữ liệu đã đổi ở thiết bị khác; hãy tải lại trang trước khi sửa tiếp.'}
             </span>
-            {persistence.savedAt && <span className="caption">Lần lưu gần nhất: {new Date(persistence.savedAt).toLocaleString('vi-VN')}</span>}
+            {persistence.savedAt && <span className="caption">{t('Lần lưu gần nhất:', 'Last saved:')} {new Date(persistence.savedAt).toLocaleString(locale === 'en' ? 'en-GB' : 'vi-VN')}</span>}
           </div>
           {persistence.message && <p className="mt-2 text-sm text-danger-ink">{persistence.message}</p>}
         </Card>
@@ -219,6 +222,12 @@ export function SettingsPage() {
           <div className="space-y-5">
             <section className="space-y-3" aria-labelledby="google-direct-title">
               <h3 id="google-direct-title" className="font-semibold">Kết nối trực tiếp</h3>
+              <p className="text-sm text-muted">
+                Trước khi kết nối, hãy xem cách PaceWise truy cập, sử dụng, lưu trữ và chia sẻ dữ liệu Google trong{' '}
+                <a className="font-medium text-primary underline" href="/privacy" target="_blank" rel="noreferrer">
+                  Chính sách quyền riêng tư
+                </a>.
+              </p>
               {(calendarError || calendar?.error) && <p role="alert" className="text-sm text-danger-ink">{calendarError || calendar?.error}</p>}
               <Button size="sm" variant="secondary" icon="refresh" onClick={() => void refreshCalendarStatus()}>Kiểm tra kết nối Google lại</Button>
               {!calendarLoaded ? (
@@ -237,7 +246,12 @@ export function SettingsPage() {
               ) : (
                 <div className="space-y-4">
                   <div className="rounded-xl border border-line p-4 text-sm">
-                    {calendar.health === 'degraded' ? 'Kết nối cần kiểm tra lại' : 'Đã kết nối'}{calendar.accountEmail ? <> với <strong>{calendar.accountEmail}</strong></> : ''}. PaceWise không sửa hoặc xóa sự kiện khác của bạn.
+                    {calendar.health === 'degraded'
+                      ? t('Kết nối cần kiểm tra lại', 'The connection needs attention')
+                      : t('Đã kết nối', 'Connected')}
+                    {calendar.accountEmail
+                      ? <>{t(' với ', ' to ')}<strong>{calendar.accountEmail}</strong></>
+                      : ''}. {t('PaceWise không sửa hoặc xóa sự kiện khác của bạn.', 'PaceWise does not edit or delete your other events.')}
                   </div>
                   {!calendarBlocks.length && (
                     <div className="rounded-xl border border-warning/40 bg-warning-light p-4 text-sm text-warning-ink">
@@ -253,14 +267,16 @@ export function SettingsPage() {
                     <Button variant="secondary" icon="refresh" loading={calendarBusy} onClick={importBusyTime}>Nhập lịch bận từ Google (7 ngày)</Button>
                     {calendarBlocks.length ? (
                       <Button icon="calendar" onClick={() => setConfirmExport(true)}>
-                        Đưa {calendarBlocks.length} ca lên Google
+                        {locale === 'en'
+                          ? `Add ${calendarBlocks.length} ${calendarBlocks.length === 1 ? 'session' : 'sessions'} to Google`
+                          : `Đưa ${calendarBlocks.length} ca lên Google`}
                       </Button>
                     ) : (
                       <ButtonLink to="/plan" icon="calendar">Mở Plan để tạo kế hoạch</ButtonLink>
                     )}
                     <Button variant="danger" disabled={calendarBusy} onClick={disconnectCalendar}>Ngắt kết nối</Button>
                   </div>
-                  {calendar.lastFreeBusySyncAt && <p className="caption">Nhập lịch bận gần nhất: {new Date(calendar.lastFreeBusySyncAt).toLocaleString('vi-VN')}</p>}
+                  {calendar.lastFreeBusySyncAt && <p className="caption">{t('Nhập lịch bận gần nhất:', 'Busy times last imported:')} {new Date(calendar.lastFreeBusySyncAt).toLocaleString(locale === 'en' ? 'en-GB' : 'vi-VN')}</p>}
                   {calendar.health === 'degraded' && <Button variant="secondary" onClick={startGoogleConnect}>Cấp quyền Google lại</Button>}
                 </div>
               )}
@@ -271,7 +287,9 @@ export function SettingsPage() {
                 <h3 id="ics-title" className="font-semibold">Xuất file lịch</h3>
                 <p className="caption mt-1">
                   {calendarBlocks.length
-                    ? `${calendarBlocks.length} ca tự học trong kế hoạch hiện tại · không cần kết nối Google.`
+                    ? locale === 'en'
+                      ? `${calendarBlocks.length} ${calendarBlocks.length === 1 ? 'study session' : 'study sessions'} in the current plan · can be exported as an .ics file independently of Google.`
+                      : `${calendarBlocks.length} ca tự học trong kế hoạch hiện tại · có thể xuất file .ics độc lập với Google.`
                     : 'Chưa có ca tự học trong kế hoạch đã xác nhận để xuất. Kết nối Google không tự tạo nội dung file .ics.'}
                 </p>
               </div>
@@ -291,7 +309,9 @@ export function SettingsPage() {
         footer={(
           <>
             <Button variant="secondary" disabled={calendarBusy} onClick={() => setConfirmExport(false)}>Hủy</Button>
-            <Button loading={calendarBusy} onClick={exportBlocks}>Xác nhận tạo {calendarBlocks.length} sự kiện</Button>
+            <Button loading={calendarBusy} onClick={exportBlocks}>{locale === 'en'
+              ? `Confirm creating ${calendarBlocks.length} ${calendarBlocks.length === 1 ? 'event' : 'events'}`
+              : `Xác nhận tạo ${calendarBlocks.length} sự kiện`}</Button>
           </>
         )}
       >

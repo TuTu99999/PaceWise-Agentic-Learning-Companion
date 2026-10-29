@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Course, LMSCalendarItem, Task, TimeBlock } from '../types';
-import { buildPlanTimeline, hidePastStudentCalendarItems } from './planTimeline';
+import { buildPlanTimeline } from './planTimeline';
 import { weekdayOf } from './time';
 
 const courses: Course[] = [{ id: '1', code: 'CS101', name: 'Computer Science', tone: 'primary' }];
@@ -31,6 +31,19 @@ const event: LMSCalendarItem = {
 };
 
 describe('buildPlanTimeline', () => {
+  it('keeps the informational outside-preference flag from an AI block', () => {
+    const result = buildPlanTimeline({
+      blocks: [{ ...blocks[0], outsidePreferred: true }],
+      calendarItems: [],
+      tasks,
+      courses,
+      from: '2026-10-02',
+      to: '2026-10-08',
+    });
+
+    expect(result[0].outsidePreferred).toBe(true);
+  });
+
   it('merges LMS events and PaceWise blocks in chronological order', () => {
     const result = buildPlanTimeline({ blocks, calendarItems: [event], tasks, courses, from: '2026-10-02', to: '2026-10-08' });
 
@@ -98,7 +111,7 @@ describe('buildPlanTimeline', () => {
     }));
   });
 
-  it('hides past student-created items but keeps the official course calendar', () => {
+  it('keeps past student-created items visible when browsing calendar history', () => {
     const timeline = buildPlanTimeline({
       blocks: [blocks[0], { ...blocks[0], id: 'future-block', date: '2026-10-05' }],
       calendarItems: [event],
@@ -112,12 +125,10 @@ describe('buildPlanTimeline', () => {
       to: '2026-10-08',
     });
 
-    const visible = hidePastStudentCalendarItems(timeline, '2026-10-04');
-
-    expect(visible).toContainEqual(expect.objectContaining({ id: 'lms:event:event-1', date: '2026-10-03' }));
-    expect(visible).not.toContainEqual(expect.objectContaining({ id: 'pacewise:block-1' }));
-    expect(visible).not.toContainEqual(expect.objectContaining({ id: 'busy:past-personal:2026-10-03' }));
-    expect(visible).toContainEqual(expect.objectContaining({ id: 'pacewise:future-block' }));
-    expect(visible).toContainEqual(expect.objectContaining({ id: 'busy:future-personal:2026-10-05' }));
+    expect(timeline).toContainEqual(expect.objectContaining({ id: 'lms:event:event-1', date: '2026-10-03' }));
+    expect(timeline).toContainEqual(expect.objectContaining({ id: 'pacewise:block-1' }));
+    expect(timeline).toContainEqual(expect.objectContaining({ id: 'busy:past-personal:2026-10-03' }));
+    expect(timeline).toContainEqual(expect.objectContaining({ id: 'pacewise:future-block' }));
+    expect(timeline).toContainEqual(expect.objectContaining({ id: 'busy:future-personal:2026-10-05' }));
   });
 });

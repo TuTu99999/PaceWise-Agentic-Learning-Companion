@@ -11,6 +11,7 @@ class QAHistoryTurn(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000, description="Tin nhắn từ user")
     workflow: Literal["plan", "do", "tracking", "qa", "understanding", "recover", "reflect"] | None = None
+    locale: Literal["vi", "en"] = "vi"
     context: dict[str, Any] = Field(default_factory=dict)
     qa_history: list[QAHistoryTurn] = Field(default_factory=list, max_length=4)
 

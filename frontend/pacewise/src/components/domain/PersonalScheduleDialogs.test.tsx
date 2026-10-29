@@ -29,6 +29,13 @@ describe('personal calendar dialogs', () => {
     });
   });
 
+  it('opens a full keyboard so mobile users can type a clock separator', () => {
+    render(<RoutineDialog open value={null} onClose={vi.fn()} onSave={vi.fn()} />);
+
+    expect(screen.getByLabelText('Thường thức dậy')).toHaveAttribute('inputmode', 'text');
+    expect(screen.getByLabelText('Thường đi ngủ')).toHaveAttribute('inputmode', 'text');
+  });
+
   it('rejects an invalid typed clock instead of guessing', () => {
     render(<RoutineDialog open value={null} onClose={vi.fn()} onSave={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Thường đi ngủ'), { target: { value: '25:70' } });

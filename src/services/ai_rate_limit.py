@@ -257,18 +257,19 @@ def reserve_ai_request(
             window_seconds=3600,
             now_epoch=now_epoch,
         )
-        _consume(
-            db,
-            scope_type="user",
-            scope_hash=user_scope,
-            limit_type="daily_tokens",
-            amount=reserved_tokens,
-            limit=settings.ai_daily_token_limit_per_user,
-            window_seconds=86400,
-            now_epoch=now_epoch,
-            rejection_code="AI_DAILY_QUOTA_EXCEEDED",
-            rejection_message="Bạn đã sử dụng hết hạn mức AI trong ngày.",
-        )
+        if settings.ai_daily_token_limit_per_user > 0:
+            _consume(
+                db,
+                scope_type="user",
+                scope_hash=user_scope,
+                limit_type="daily_tokens",
+                amount=reserved_tokens,
+                limit=settings.ai_daily_token_limit_per_user,
+                window_seconds=86400,
+                now_epoch=now_epoch,
+                rejection_code="AI_DAILY_QUOTA_EXCEEDED",
+                rejection_message="Bạn đã sử dụng hết hạn mức AI trong ngày.",
+            )
         if settings.ai_institution_daily_budget_usd > 0:
             _consume(
                 db,
@@ -382,14 +383,15 @@ def finalize_ai_request(
         # Debit the window that admitted the request, including across midnight.
         admitted_at = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=UTC)
         day_start = (int(admitted_at.timestamp()) // 86400) * 86400
-        token_bucket = _bucket_id("user", reservation.user_scope_hash, "daily_tokens", day_start)
-        token_delta = actual_tokens - reservation.reserved_tokens
-        if token_delta:
-            db.execute(
-                update(AiUsageBucket)
-                .where(AiUsageBucket.id == token_bucket)
-                .values(used=AiUsageBucket.used + token_delta)
-            )
+        if settings.ai_daily_token_limit_per_user > 0:
+            token_bucket = _bucket_id("user", reservation.user_scope_hash, "daily_tokens", day_start)
+            token_delta = actual_tokens - reservation.reserved_tokens
+            if token_delta:
+                db.execute(
+                    update(AiUsageBucket)
+                    .where(AiUsageBucket.id == token_bucket)
+                    .values(used=AiUsageBucket.used + token_delta)
+                )
         cost_delta = actual_cost_microusd - reservation.reserved_cost_microusd
         if cost_delta:
             institution_scope = _scope_hash(settings, settings.institution_id)

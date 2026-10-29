@@ -46,7 +46,8 @@
     'Dashboard dùng số liệu tổng hợp theo nhóm đủ kích thước để hạn chế nhận diện cá nhân. Nội dung hỏi đáp và phản hồi riêng không hiển thị cho giảng viên trong dashboard.': 'The dashboard uses sufficiently large aggregate groups to reduce identification risk. Private Q&A and reflections are not shown to instructors.',
     'Bắt đầu bằng một kế hoạch rõ ràng.': 'Start with a clear plan.',
     'Tạo tài khoản sinh viên bằng Google hoặc đăng nhập tài khoản hiện tại.': 'Create a student account with Google or sign in to an existing account.',
-    'Đăng ký bằng Google': 'Continue with Google', 'Thông tin sử dụng và quyền truy cập': 'Usage and access information'
+    'Đăng ký bằng Google': 'Continue with Google',
+    'Chính sách quyền riêng tư': 'Privacy Policy', 'Điều khoản sử dụng': 'Terms of Service'
   };
 
   var originalText = new WeakMap();

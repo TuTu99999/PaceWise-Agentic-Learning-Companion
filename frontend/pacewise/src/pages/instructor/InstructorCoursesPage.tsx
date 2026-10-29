@@ -14,20 +14,32 @@ import { TeacherMaterialsPanel } from '../../components/domain/TeacherMaterialsP
 import { TeacherScheduleTools } from '../../components/domain/TeacherScheduleTools';
 import { CourseMembersPanel } from '../../components/domain/CourseMembersPanel';
 import { parseInvitationEmails } from '../../services/courseInvitations';
+import { isFresh, readManagedCoursesCache, writeManagedCoursesCache } from '../../services/instructorPageCache';
 import { InstructorTasksPage } from './InstructorTasksPage';
 
 export function InstructorCoursesPage() {
   useDocumentTitle('Môn học');
   const { state, dispatch } = useAppStore(); const [params] = useSearchParams();
-  const [courses, setCourses] = useState<ManagedCourse[]>([]); const [selected, setSelected] = useState<number | null>(null);
+  const userId = state.user?.id;
+  const revision = state.lmsRevision ?? 0;
+  const initialCache = readManagedCoursesCache(userId);
+  const [courses, setCourses] = useState<ManagedCourse[]>(initialCache?.data ?? []); const [selected, setSelected] = useState<number | null>(initialCache?.data.find((item) => !item.archived)?.id ?? null);
   const [filter, setFilter] = useState('active'); const [tab, setTab] = useState(params.get('tab') === 'tasks' ? 'tasks' : 'lessons');
-  const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [loading, setLoading] = useState(!initialCache); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const [editing, setEditing] = useState<ManagedCourse | 'new' | null>(null);
   const [action, setAction] = useState<{ course: ManagedCourse; kind: 'archive' | 'restore' } | null>(null);
   const alive = useRef(true);
-  const load = async () => {
+  const load = async (force = false) => {
+    if (!userId) return;
+    const cached = readManagedCoursesCache(userId);
+    if (!force && isFresh(cached, revision)) {
+      setCourses(cached!.data);
+      setLoading(false);
+      return;
+    }
     const data = await fetchManagedCourses();
     if (!alive.current) return;
+    writeManagedCoursesCache(userId, revision, data);
     const inCurrentFilter = (item: ManagedCourse) => filter === 'all' || (filter === 'archived' ? item.archived : !item.archived);
     setCourses(data);
     setSelected((id) => data.some((item) => item.id === id && inCurrentFilter(item))
@@ -39,12 +51,12 @@ export function InstructorCoursesPage() {
     void load().catch((reason) => { if (alive.current) setError(reason instanceof Error ? reason.message : 'Không tải được môn.'); })
       .finally(() => { if (alive.current) setLoading(false); });
     return () => { alive.current = false; };
-  }, [state.user?.id]);
+  }, [userId]);
   const changed = async () => {
     // Preserve workspace; refresh membership without logging in or applying student plans.
     dispatch({ type: 'LMS_EVENT_RECEIVED' });
     try {
-      await load(); const synced = await syncCanvas(); const user = await getCurrentSession();
+      await load(true); const synced = await syncCanvas(); const user = await getCurrentSession();
       if (!alive.current) return;
       if (user) dispatch({ type: 'REFRESH_SESSION', user });
       dispatch({ type: 'SYNC_CANVAS', courses: synced.courses, tasks: synced.tasks, courseData: synced.courseData,
@@ -104,7 +116,7 @@ function CourseForm({ course, onClose, onSaved }: { course?: ManagedCourse; onCl
     <Input label="Tên môn" required maxLength={255} value={name} onChange={(event) => setName(event.target.value)} />
     <Input label="Học kỳ" required maxLength={128} value={term} onChange={(event) => setTerm(event.target.value)} />
     {!course && <fieldset className="space-y-2 rounded-xl border border-line p-3"><legend className="px-1 text-sm font-semibold">Sinh viên tham gia (tùy chọn)</legend>
-      <p className="text-sm text-muted">Chỉ các sinh viên thuộc lớp bạn đang quản lý. Không chọn ai thì môn mới là môn trống.</p>
+      <p className="text-sm text-muted">Gồm sinh viên đã xác minh Google và sinh viên từ lớp bạn quản lý. Không chọn ai thì môn mới là môn trống.</p>
       <Button type="button" variant="ghost" onClick={() => setIds(roster.map((item) => item.id))}>Chọn cả danh sách</Button><div className="max-h-48 overflow-auto">{roster.map((item) => <label key={item.id} className="flex min-h-9 items-center gap-2 text-sm"><input type="checkbox" checked={ids.includes(item.id)} onChange={(event) => setIds(event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} />{item.name}</label>)}</div>
       <label className="block text-sm font-semibold" htmlFor="new-course-invites">Mời sinh viên mới bằng email</label>
       <textarea id="new-course-invites" className="min-h-20 w-full rounded-xl border border-line bg-white p-3 text-sm" maxLength={13000} value={inviteEmails} onChange={event => setInviteEmails(event.target.value)} placeholder="Nhiều email cách nhau bằng dấu phẩy hoặc xuống dòng" />

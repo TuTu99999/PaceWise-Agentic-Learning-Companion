@@ -13,7 +13,7 @@ def valid_production_settings(tmp_path: Path, **overrides) -> dict:
         "app_env": "production",
         "course_source_mode": "standalone",
         "database_url": "postgresql+psycopg://pacewise:secret@db.internal/pacewise",
-        "database_schema_revision": "20261012_02",
+        "database_schema_revision": "20261015_01",
         "cors_origins": "https://app.pacewise.test",
         "pacewise_session_secret": "prod-session-secret-4Qk9!x2N7v5L8c1B",
         "metrics_bearer_token": "metrics-token-4Qk9!x2N7v5L8c1B-rotate",

@@ -35,6 +35,41 @@ async def test_new_course_refreshes_scope_and_does_not_shadow_task_route(client,
 
 
 @pytest.mark.asyncio
+async def test_delete_resource_is_scoped_and_hides_internal_storage_details(client, authoring_session, monkeypatch):
+    upstream = AsyncMock(return_value={
+        "status": "deleted",
+        "source_url": "https://external-lms.test/file/9",
+        "delete_stored_object": False,
+    })
+    monkeypatch.setattr(instructor_management.LMSClient, "teacher_request", upstream)
+
+    response = await client.delete("/api/v1/instructor/manage/courses/7/resources/9")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted"}
+    upstream.assert_awaited_once_with(
+        "DELETE", "/api/pacewise/v1/teacher/courses/7/resources/9", user_id=12, payload=None
+    )
+
+
+def test_delete_resource_removes_the_production_s3_object(monkeypatch):
+    from types import SimpleNamespace
+
+    from src.services import course_object_store
+
+    deleted = []
+    monkeypatch.setattr(course_object_store, "delete_object", lambda settings, key: deleted.append((settings, key)))
+    settings = SimpleNamespace(course_source_mode="standalone")
+
+    instructor_management.cleanup_owned_resource(
+        "pacewise-object://demo/courses/7/file.docx",
+        settings,
+    )
+
+    assert deleted == [(settings, "demo/courses/7/file.docx")]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["preview", "demo-preview", "series-preview"])
 async def test_schedule_cannot_select_foreign_course(client, authoring_session, monkeypatch, action):
     upstream = AsyncMock()

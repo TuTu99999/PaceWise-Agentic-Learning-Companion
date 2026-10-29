@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agents.guardrails import normalize_text
 from src.agents.llm import get_agent_llm
-from src.agents.prompts.milestone import MILESTONE_SYSTEM_PROMPT, WEEKLY_GOAL_SYSTEM_PROMPT
+from src.agents.prompts.milestone import MILESTONE_JSON_SYSTEM_PROMPT
 from src.agents.state import LearningGraphState
 from src.agents.validators import build_pending_action, validate_plan_constraints
 from src.services.plan_intelligence import (
@@ -24,6 +24,7 @@ from src.services.plan_intelligence import (
     build_template_milestones,
     normalize_rubric_criteria,
 )
+from src.services.plan_progress import observed_plan_progress
 
 
 def _parse_int_minutes(val: Any) -> int:
@@ -84,6 +85,11 @@ def _semantic_milestone_fields(item: dict[str, Any]) -> dict[str, Any]:
             fields["mapping_confidence"] = min(1.0, max(0.0, float(confidence)))
         except (TypeError, ValueError):
             pass
+    part_ids = item.get("assignment_part_ids", item.get("assignmentPartIds"))
+    if isinstance(part_ids, list):
+        fields["assignment_part_ids"] = [
+            str(value).strip() for value in part_ids if str(value).strip()
+        ]
     return fields
 
 
@@ -127,37 +133,76 @@ def _assignment_goal_source_refs(assignment: dict[str, Any]) -> list[str]:
     for item in assignment.get("planning_evidence") or []:
         if isinstance(item, dict) and item.get("sourceRef"):
             refs.append(str(item["sourceRef"]))
+    for item in assignment.get("assignment_parts") or []:
+        if isinstance(item, dict) and item.get("sourceRef"):
+            refs.append(str(item["sourceRef"]))
     return list(dict.fromkeys(refs))
 
 
-def _weekly_goal_context(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Bound official assignment context before it is sent to the model."""
-    result = []
-    for item in candidates:
-        evidence = []
-        for row in item.get("planning_evidence") or []:
-            if not isinstance(row, dict):
-                continue
-            evidence.append(
-                {
-                    "section": str(row.get("section") or "")[:200],
-                    "content": str(row.get("content") or "")[:1800],
-                    "source_ref": str(row.get("sourceRef") or ""),
-                }
-            )
+def _milestone_context(
+    assignments: list[dict[str, Any]],
+    requested_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Bound the provider payload to evidence used for decomposition.
+
+    Availability, calendar constraints and learner-history estimates are owned
+    by the deterministic scheduler after the model returns. Sending them here
+    made the prompt several times larger without changing placement safety.
+    """
+    result: list[dict[str, Any]] = []
+    for assignment in assignments:
+        task_id = str(assignment.get("id") or "")
+        requested = requested_by_id.get(task_id, {})
+        criteria = [
+            {
+                "criterion_id": item["criterionId"],
+                "description": str(item.get("description") or item.get("name") or "")[:500],
+                "knowledge_components": item.get("knowledgeComponents") or [],
+                "source_ref": item["sourceRef"],
+            }
+            for item in normalize_rubric_criteria(assignment)[:8]
+        ]
+        evidence = [
+            {
+                "section": str(item.get("section") or "")[:160],
+                "content": str(item.get("content") or "")[:600],
+                "source_ref": str(item.get("sourceRef") or ""),
+            }
+            for item in (assignment.get("planning_evidence") or [])[:2]
+            if isinstance(item, dict)
+        ]
+        raw_parts = [
+            item for item in assignment.get("assignment_parts") or []
+            if isinstance(item, dict) and item.get("partId")
+        ]
+        if raw_parts:
+            evidence = []
+        # Reuse the previous 1,200-character evidence ceiling instead of
+        # expanding provider egress.  Every part keeps its stable ID; long
+        # briefs fall back to the server-side question allocator.
+        per_part_chars = max(60, 1200 // max(1, len(raw_parts)))
+        parts = [
+            {
+                "part_id": str(item["partId"]),
+                "label": str(item.get("label") or item["partId"])[:80],
+                "content": str(item.get("content") or "")[:per_part_chars],
+                "source_ref": str(item.get("sourceRef") or ""),
+            }
+            for item in raw_parts[:12]
+        ]
         result.append(
             {
-                "task_id": str(item.get("id") or ""),
-                "course_code": str(item.get("course_code") or item.get("course_id") or ""),
-                "module": str(item.get("chapter") or ""),
-                "title": str(item.get("title") or "")[:300],
-                "description": str(item.get("description") or "")[:2500],
-                "deadline": item.get("deadline"),
-                "points_possible": item.get("points_possible"),
-                "assignment_group_weight": (item.get("assignment_group") or {}).get("weight"),
-                "rubric_criteria": normalize_rubric_criteria(item),
-                "planning_evidence": evidence[:4],
-                "allowed_source_refs": _assignment_goal_source_refs(item),
+                "task_id": task_id,
+                "course": str(assignment.get("course_code") or assignment.get("course_id") or ""),
+                "module": str(assignment.get("chapter") or "")[:160],
+                "title": str(assignment.get("title") or "")[:240],
+                "description": str(assignment.get("description") or "")[:900],
+                "deadline": assignment.get("deadline") or assignment.get("due_at"),
+                "remaining_minutes": requested.get("remaining_minutes") or requested.get("remainingMin"),
+                "rubric_criteria": criteria,
+                "planning_evidence": evidence,
+                "assignment_parts": parts,
+                "allowed_source_refs": _assignment_goal_source_refs(assignment),
             }
         )
     return result
@@ -212,22 +257,46 @@ def _extract_weekly_goals(text: str, candidates: list[dict[str, Any]]) -> list[d
     covered = {task_id for goal in goals for task_id in goal["taskIds"]}
     if goals and covered == candidate_ids:
         return goals[:4]
-    return [
-        {
-            "id": f"goal-{index + 1}",
-            "title": f"Hoàn thành phần cần thiết của {item.get('title') or 'nhiệm vụ'} trước hạn",
-            "taskIds": [str(item.get("id"))],
-            "confirmed": False,
-            "rationale": (
+    grounded_goals: list[dict[str, Any]] = []
+    for index, item in enumerate(candidates):
+        assignment_title = str(item.get("title") or "nhiệm vụ")
+        chapter = str(item.get("chapter") or "").strip()
+        parts = [
+            part for part in item.get("assignment_parts") or []
+            if isinstance(part, dict) and part.get("partId")
+        ]
+        if parts:
+            goal_title = f"Hoàn thành {len(parts)} phần của {assignment_title}"
+            rationale = (
+                f"PaceWise đã đọc đề bài được phép và nhận diện {len(parts)} câu/phần; "
+                "các bước chi tiết sẽ được chia sau khi bạn xác nhận mục tiêu."
+            )
+            if item.get("deadline"):
+                rationale += f" Hạn {item.get('deadline')}."
+        elif chapter:
+            goal_title = f"Hoàn thành {assignment_title} trong {chapter}"
+            rationale = "Mục tiêu bám theo module/chương trong syllabus và assignment đã công bố."
+            if item.get("deadline"):
+                rationale += f" Hạn {item.get('deadline')}."
+        else:
+            goal_title = f"Hoàn thành phần cần thiết của {assignment_title} trước hạn"
+            rationale = (
                 f"Nhiệm vụ có hạn {item.get('deadline')}; mục tiêu giữ đúng phạm vi assignment đã công bố."
                 if item.get("deadline")
                 else "Mục tiêu giữ đúng phạm vi assignment đã công bố."
-            ),
-            "sourceRefs": _assignment_goal_source_refs(item),
-            "analysisSource": "assignment_rule",
-        }
-        for index, item in enumerate(candidates)
-    ]
+            )
+        grounded_goals.append(
+            {
+                "id": f"goal-{index + 1}",
+                "title": goal_title,
+                "taskIds": [str(item.get("id"))],
+                "confirmed": False,
+                "rationale": rationale,
+                "sourceRefs": _assignment_goal_source_refs(item),
+                "analysisSource": "assignment_rule",
+            }
+        )
+    return grounded_goals
 
 
 def _extract_milestones_from_text(text: str) -> list[dict[str, Any]]:
@@ -368,6 +437,8 @@ def _validate_model_milestone_scope(
     milestones: list[dict[str, Any]],
     expected_task_ids: set[str],
     allowed_source_refs_by_task: dict[str, set[str]] | None = None,
+    expected_part_ids_by_task: dict[str, set[str]] | None = None,
+    minimum_milestones_by_task: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Reject ambiguous model decomposition before it reaches the scheduler.
 
@@ -383,6 +454,10 @@ def _validate_model_milestone_scope(
 
     seen_milestone_ids: set[str] = set()
     covered_task_ids: set[str] = set()
+    covered_part_ids: dict[str, set[str]] = {
+        task_id: set() for task_id in (expected_part_ids_by_task or {})
+    }
+    milestone_counts: dict[str, int] = {task_id: 0 for task_id in expected_task_ids}
     for index, milestone in enumerate(milestones):
         task_id = str(milestone.get("task_id") or "").strip()
         milestone_id = str(milestone.get("milestone_id") or "").strip()
@@ -392,6 +467,7 @@ def _validate_model_milestone_scope(
             errors.append({"code": "unknown_task_id", "index": index})
         else:
             covered_task_ids.add(task_id)
+            milestone_counts[task_id] = milestone_counts.get(task_id, 0) + 1
             if allowed_source_refs_by_task is not None:
                 source_refs = [str(value) for value in milestone.get("source_refs") or [] if str(value).strip()]
                 if not source_refs:
@@ -406,6 +482,26 @@ def _validate_model_milestone_scope(
                             "sourceRefs": invalid_refs,
                         }
                     )
+            expected_parts = (expected_part_ids_by_task or {}).get(task_id, set())
+            if expected_parts:
+                part_ids = {
+                    str(value).strip()
+                    for value in milestone.get("assignment_part_ids") or []
+                    if str(value).strip()
+                }
+                if not part_ids:
+                    errors.append({"code": "missing_assignment_part_ids", "index": index, "taskId": task_id})
+                invalid_parts = sorted(part_ids - expected_parts)
+                if invalid_parts:
+                    errors.append(
+                        {
+                            "code": "invalid_assignment_part_id",
+                            "index": index,
+                            "taskId": task_id,
+                            "partIds": invalid_parts,
+                        }
+                    )
+                covered_part_ids.setdefault(task_id, set()).update(part_ids & expected_parts)
         if not milestone_id:
             errors.append({"code": "missing_milestone_id", "index": index})
         elif milestone_id in seen_milestone_ids:
@@ -415,14 +511,80 @@ def _validate_model_milestone_scope(
 
     for task_id in sorted(expected_task_ids - covered_task_ids):
         errors.append({"code": "missing_task_coverage", "taskId": task_id})
+    for task_id, expected_parts in sorted((expected_part_ids_by_task or {}).items()):
+        missing_parts = sorted(expected_parts - covered_part_ids.get(task_id, set()))
+        if missing_parts:
+            errors.append(
+                {
+                    "code": "missing_assignment_part_coverage",
+                    "taskId": task_id,
+                    "partIds": missing_parts,
+                }
+            )
+    for task_id, minimum in sorted((minimum_milestones_by_task or {}).items()):
+        actual = milestone_counts.get(task_id, 0)
+        if actual < minimum:
+            errors.append(
+                {
+                    "code": "collapsed_assignment_parts",
+                    "taskId": task_id,
+                    "minimumMilestones": minimum,
+                    "actualMilestones": actual,
+                }
+            )
 
     return {
         "valid": not errors,
         "errors": errors,
         "expectedTaskIds": sorted(expected_task_ids),
         "coveredTaskIds": sorted(covered_task_ids),
+        "coveredAssignmentPartIds": {
+            task_id: sorted(values) for task_id, values in covered_part_ids.items()
+        },
+        "milestoneCounts": milestone_counts,
         "fallbackApplied": bool(errors),
     }
+
+
+def _rebalance_model_minutes(
+    milestones: list[dict[str, Any]],
+    budgets_by_task: dict[str, int],
+) -> list[dict[str, Any]] | None:
+    """Fit model-proposed semantic parts to the student-confirmed workload.
+
+    The model ranks relative effort; it never gets authority to grow the total
+    workload.  Return ``None`` when even the 15-minute minimum cannot preserve
+    every proposed part, so the caller can use the grounded question fallback.
+    """
+    result = [dict(item) for item in milestones]
+    for task_id, budget in budgets_by_task.items():
+        indices = [index for index, item in enumerate(result) if str(item.get("task_id") or "") == task_id]
+        if not indices:
+            continue
+        budget = max(15, int(budget))
+        if len(indices) * 15 > budget:
+            return None
+        weights = [max(1, int(result[index].get("estimated_minutes") or 1)) for index in indices]
+        minutes = [15] * len(indices)
+        remaining = budget - 15 * len(indices)
+        weight_sum = sum(weights)
+        raw = [remaining * weight / weight_sum for weight in weights]
+        floors = [int(value) for value in raw]
+        for position, value in enumerate(floors):
+            minutes[position] += value
+        for position in sorted(
+            range(len(indices)),
+            key=lambda item: raw[item] - floors[item],
+            reverse=True,
+        )[: remaining - sum(floors)]:
+            minutes[position] += 1
+        for index, value in zip(indices, minutes):
+            result[index]["estimated_minutes"] = value
+            result[index]["allocation_basis"] = {
+                "method": "model_relative_effort_with_fixed_task_budget",
+                "taskBudgetMinutes": budget,
+            }
+    return result
 
 
 def _apply_deterministic_adjustment(milestones: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
@@ -476,31 +638,10 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
             state.get("assignments") or [],
             state.get("goals") or [],
         )
-        response_text = ""
-        provider_available = False
-        if candidates:
-            try:
-                llm = get_agent_llm(temperature=0.2, max_tokens=900, task="plan")
-                response = llm.invoke(
-                    [
-                        SystemMessage(content=WEEKLY_GOAL_SYSTEM_PROMPT),
-                        HumanMessage(
-                            content=(
-                                "Dữ liệu nhiệm vụ chính thức đã giới hạn phạm vi:\n"
-                                + json.dumps(_weekly_goal_context(candidates), ensure_ascii=False, indent=2)
-                            )
-                        ),
-                    ]
-                )
-                response_text = str(response.content or "").strip()
-                provider_available = True
-            except Exception:
-                response_text = ""
-        weekly_goals = _extract_weekly_goals(response_text, candidates)
-        model_covered = bool(weekly_goals) and all(
-            goal.get("analysisSource") == "model" for goal in weekly_goals
-        )
-        source = "model" if provider_available and model_covered else "assignment_rule_fallback"
+        # This step only ranks official assignments and preserves their source
+        # references. A model round trip adds latency but no authoritative data.
+        weekly_goals = _extract_weekly_goals("", candidates)
+        source = "assignment_rule"
         titles = "\n".join(f"- {item['title']}" for item in weekly_goals)
         return {
             "current_node": "plan",
@@ -509,9 +650,8 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
                 + (titles or "- Chưa có deadline mở trong dữ liệu LMS.")
             ),
             "analysis": (
-                "Plan Agent đã phân tích assignment, module, rubric và tài liệu bài tập được gắn nguồn."
-                if source == "model"
-                else "Model chưa trả đầu ra hợp lệ; dùng mục tiêu an toàn từ assignment, deadline và trọng số."
+                "Plan Agent dùng assignment, deadline, trọng số và nguồn chính thức "
+                "để đề xuất mục tiêu có thể kiểm tra."
             ),
             "status": "awaiting_student" if weekly_goals else "completed",
             "output": {
@@ -519,7 +659,7 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
                 "plan_validation": {"valid": True, "errors": []},
                 "goal_analysis": {
                     "source": source,
-                    "fallbackApplied": source != "model",
+                    "fallbackApplied": False,
                     "candidateTaskIds": [str(item.get("id")) for item in candidates],
                     "coveredTaskIds": sorted(
                         {task_id for goal in weekly_goals for task_id in goal.get("taskIds", [])}
@@ -554,49 +694,68 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
 
     requested_goals = state.get("goals") or []
     requested_by_id = {
-        str(item.get("task_id") or item.get("taskId") or ""): item
+        str(item.get("task_id") or item.get("taskId") or ""): dict(item)
         for item in requested_goals
         if str(item.get("task_id") or item.get("taskId") or "")
     }
+    observed_progress = observed_plan_progress(state.get("learner_profile") or {})
+    for task_id, progress in observed_progress.items():
+        if task_id in requested_by_id:
+            requested_by_id[task_id]["remaining_minutes"] = progress["remaining_minutes"]
     selected_assignments = [
-        item
+        {
+            **item,
+            **(
+                {
+                    "assignment_parts": [
+                        part
+                        for part in item.get("assignment_parts") or []
+                        if isinstance(part, dict)
+                        if str(part.get("partId") or "")
+                        not in set(observed_progress[str(item.get("id") or "")]["completed_assignment_part_ids"])
+                    ]
+                }
+                if str(item.get("id") or "") in observed_progress and item.get("assignment_parts")
+                else {}
+            ),
+        }
         for item in (state.get("assignments") or [])
         if not requested_by_id or str(item.get("id") or "") in requested_by_id
+        if observed_progress.get(str(item.get("id") or ""), {}).get("remaining_minutes", 1) > 0
     ]
     decomposition_routes = {
         str(item.get("id") or ""): assignment_structure(item)
         for item in selected_assignments
         if str(item.get("id") or "")
     }
-    template_only = bool(decomposition_routes) and all(
-        item["route"] == "template" for item in decomposition_routes.values()
-    )
-    rule_based_milestones = [
-        milestone
-        for assignment in selected_assignments
-        for milestone in build_template_milestones(
-            assignment,
-            target_minutes=int(
-                requested_by_id.get(str(assignment.get("id") or ""), {}).get("remaining_minutes")
-                or requested_by_id.get(str(assignment.get("id") or ""), {}).get("remainingMin")
-                or float(assignment.get("estimated_hours") or 1) * 60
-            ),
-        )
+    deterministic_assignments = [
+        item
+        for item in selected_assignments
+        if decomposition_routes.get(str(item.get("id") or ""), {}).get("route") != "llm"
     ]
-    template_milestones = rule_based_milestones if template_only else []
-    expected_task_ids = {
-        str(assignment.get("id") or "").strip()
-        for assignment in selected_assignments
-        if str(assignment.get("id") or "").strip()
-    }
-    allowed_milestone_sources = {
-        str(assignment.get("id") or ""): {
-            *_assignment_goal_source_refs(assignment),
-            *(criterion["sourceRef"] for criterion in normalize_rubric_criteria(assignment)),
-        }
-        for assignment in selected_assignments
-        if str(assignment.get("id") or "")
-    }
+    model_assignments = [
+        item
+        for item in selected_assignments
+        if decomposition_routes.get(str(item.get("id") or ""), {}).get("route") == "llm"
+    ]
+
+    def deterministic_milestones(assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            milestone
+            for assignment in assignments
+            for milestone in build_template_milestones(
+                assignment,
+                target_minutes=int(
+                    requested_by_id.get(str(assignment.get("id") or ""), {}).get("remaining_minutes")
+                    or requested_by_id.get(str(assignment.get("id") or ""), {}).get("remainingMin")
+                    or float(assignment.get("estimated_hours") or 1) * 60
+                ),
+            )
+        ]
+
+    deterministic_parts = deterministic_milestones(deterministic_assignments)
+    model_fallback_parts = deterministic_milestones(model_assignments)
+    rule_based_milestones = [*deterministic_parts, *model_fallback_parts]
 
     # Nhận diện nếu đây là lượt điều chỉnh kế hoạch đã có (Multi-turn Human-in-the-loop)
     is_adjustment = bool(
@@ -604,11 +763,56 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
         and any(k in q_lower for k in ["dời", "giảm", "tăng", "sửa", "đổi", "chỉnh", "milestone", "thời lượng", "mốc", "m1", "m2", "m3", "m4"])
     )
 
-    if template_only and not is_adjustment:
+    provider_assignments = selected_assignments if is_adjustment else model_assignments
+    expected_task_ids = {
+        str(assignment.get("id") or "").strip()
+        for assignment in provider_assignments
+        if str(assignment.get("id") or "").strip()
+    }
+    allowed_milestone_sources = {
+        str(assignment.get("id") or ""): {
+            *_assignment_goal_source_refs(assignment),
+            *(criterion["sourceRef"] for criterion in normalize_rubric_criteria(assignment)),
+        }
+        for assignment in provider_assignments
+        if str(assignment.get("id") or "")
+    }
+    expected_assignment_parts = {
+        str(assignment.get("id") or ""): {
+            str(item.get("partId"))
+            for item in assignment.get("assignment_parts") or []
+            if isinstance(item, dict) and item.get("partId")
+        }
+        for assignment in provider_assignments
+        if str(assignment.get("id") or "") and assignment.get("assignment_parts")
+    }
+    provider_budgets = {
+        str(assignment.get("id") or ""): int(
+            requested_by_id.get(str(assignment.get("id") or ""), {}).get("remaining_minutes")
+            or requested_by_id.get(str(assignment.get("id") or ""), {}).get("remainingMin")
+            or float(assignment.get("estimated_hours") or 1) * 60
+        )
+        for assignment in provider_assignments
+        if str(assignment.get("id") or "")
+    }
+    minimum_model_milestones = {
+        task_id: min(2, len(part_ids), max(1, provider_budgets.get(task_id, 30) // 30))
+        for task_id, part_ids in expected_assignment_parts.items()
+    }
+    deterministic_only = not is_adjustment and not model_assignments
+
+    if deterministic_only:
         llm = None
     else:
         try:
-            llm = get_agent_llm(temperature=0.3, task="plan")
+            llm = get_agent_llm(
+                temperature=0.2,
+                max_tokens=900,
+                task="plan",
+                cache_scope="plan-decomposition-v3",
+                timeout=4.5,
+                max_retries=0,
+            )
         except Exception:
             llm = None
 
@@ -645,12 +849,27 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
         )
         default_analysis = "Milestone Agent đã phân rã lộ trình milestone mới."
 
-    if template_only and not is_adjustment:
-        response_text = "Nhiệm vụ đã có đủ cấu trúc; PaceWise dùng template kiểm chứng được thay vì gọi LLM để chia việc."
+    # Only decomposition evidence belongs in the provider request. Scheduling
+    # inputs and learner history are consumed later by ``build_plan_draft``.
+    if is_adjustment:
+        prompt_content = "Update only the requested milestones and keep task_id values unchanged:\n" + json.dumps(
+            {"current_milestones": existing_milestones, "student_request": query},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    else:
+        prompt_content = "Decompose these selected assignments:\n" + json.dumps(
+            {"tasks": _milestone_context(model_assignments, requested_by_id)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    if deterministic_only:
+        response_text = "Nhiệm vụ đã có đủ cấu trúc; PaceWise dùng phân rã kiểm chứng được thay vì gọi LLM để chia việc."
     elif llm:
         try:
             messages = [
-                SystemMessage(content=MILESTONE_SYSTEM_PROMPT),
+                SystemMessage(content=MILESTONE_JSON_SYSTEM_PROMPT),
                 HumanMessage(content=prompt_content),
             ]
             res = llm.invoke(messages)
@@ -662,28 +881,47 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
 
     # Bóc tách milestones từ LLM. Model output is untrusted until every
     # milestone carries an exact task_id and every selected task is covered.
-    extracted = template_milestones or _extract_milestones_from_text(response_text)
+    extracted = [] if deterministic_only else _extract_milestones_from_text(response_text)
+    deterministic_source = (
+        "deterministic_hybrid"
+        if any(route.get("route") == "hybrid" for route in decomposition_routes.values())
+        else "deterministic_template"
+    )
     model_output_validation: dict[str, Any] = {
         "valid": True,
         "errors": [],
-        "expectedTaskIds": sorted(expected_task_ids),
-        "coveredTaskIds": sorted(expected_task_ids),
+        "expectedTaskIds": sorted(
+            str(item.get("id") or "") for item in selected_assignments if item.get("id")
+        ),
+        "coveredTaskIds": sorted(
+            str(item.get("id") or "") for item in selected_assignments if item.get("id")
+        ),
         "fallbackApplied": False,
-        "source": "deterministic_template" if template_only and not is_adjustment else "model",
+        "source": deterministic_source if deterministic_only else "model",
     }
-    if expected_task_ids and not (template_only and not is_adjustment):
+    if expected_task_ids and not deterministic_only:
         model_output_validation = {
             **_validate_model_milestone_scope(
                 extracted,
                 expected_task_ids,
                 allowed_source_refs_by_task=allowed_milestone_sources,
+                expected_part_ids_by_task=expected_assignment_parts,
+                minimum_milestones_by_task=minimum_model_milestones,
             ),
             "source": "model",
         }
+        if model_output_validation["valid"] and not is_adjustment:
+            rebalanced = _rebalance_model_minutes(extracted, provider_budgets)
+            if rebalanced is None:
+                model_output_validation["valid"] = False
+                model_output_validation["fallbackApplied"] = True
+                model_output_validation["errors"].append({"code": "TOO_MANY_MILESTONES_FOR_TASK_BUDGET"})
+            else:
+                extracted = rebalanced
         if not model_output_validation["valid"]:
             # Fail closed: never guess task ownership from list position or
             # title similarity. Replace the whole decomposition immediately.
-            extracted = rule_based_milestones
+            extracted = rule_based_milestones if is_adjustment else model_fallback_parts
             model_output_validation["source"] = "rule_based_fallback"
 
     if is_adjustment:
@@ -700,12 +938,17 @@ def plan_node(state: LearningGraphState) -> dict[str, Any]:
         # Áp dụng chuẩn hóa số liệu theo câu lệnh người dùng
         proposed_milestones = _apply_deterministic_adjustment(proposed_milestones, query)
     else:
-        proposed_milestones = extracted
+        proposed_milestones = [*deterministic_parts, *extracted]
 
     # Loại bỏ khối JSON thô để sinh viên chỉ nhìn thấy bảng lộ trình và lời khuyên dạng text/markdown
     clean_response = re.sub(r"```json[\s\S]*?```", "", response_text).strip()
     if not clean_response:
         clean_response = response_text
+    clean_response = (
+        f"Plan Agent đã cập nhật {len(proposed_milestones)} mốc học tập theo yêu cầu."
+        if is_adjustment
+        else f"Plan Agent đã phân rã {len(selected_assignments)} nhiệm vụ thành {len(proposed_milestones)} mốc học tập."
+    )
     if model_output_validation.get("fallbackApplied"):
         clean_response = (
             "Đầu ra phân rã tự động chưa gắn đúng từng nhiệm vụ. "

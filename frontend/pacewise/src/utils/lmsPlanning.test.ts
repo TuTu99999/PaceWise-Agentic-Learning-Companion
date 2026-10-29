@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LMSCalendarItem, LMSCourseData, Plan, Task } from '../types';
+import { initialState, reducer } from '../store/AppStore';
 import { addDays, DEMO_TODAY, weekdayOf } from './time';
 import { detectAvailabilityPlanImpacts, detectLmsPlanImpacts, lmsUnavailableSlots } from './lmsPlanning';
 
@@ -23,6 +24,49 @@ const task = (deadline = addDays(DEMO_TODAY, 5)): Task => ({ id: 't1', title: 'P
 const plan = (date = addDays(DEMO_TODAY, 1)): Plan => ({ id: 'p1', weekStart: DEMO_TODAY, savedAt: '', version: 1, blocks: [{ id: 'b1', taskId: 't1', date, start: '19:00', end: '20:00' }] });
 
 describe('LMS planning constraints', () => {
+  it('keeps the first empty sync as a baseline and detects the learner first course later', () => {
+    const next = reducer({
+      ...initialState,
+      workspaceReady: true,
+      lmsBaseline: { tasks: [], courseData: {}, syncedAt: '2026-10-01T00:00:00.000Z' },
+    }, {
+      type: 'SYNC_CANVAS',
+      courses: [{ id: 'c2', code: 'DB201', name: 'Cơ sở dữ liệu', tone: 'primary' }],
+      tasks: [],
+      courseData: {
+        c2: { courseId: 'c2', modules: [], resources: [], plannerItems: [], appointmentGroups: [], calendarItems: [] },
+      },
+    });
+
+    expect(next.planImpacts).toContainEqual(expect.objectContaining({
+      id: 'course-added:c2',
+      kind: 'course_added',
+    }));
+  });
+
+  it('requests reanalysis when a student is added to a new course even before it has tasks', () => {
+    const before = course([]);
+    const after = {
+      ...before,
+      c2: { courseId: 'c2', modules: [], resources: [], plannerItems: [], appointmentGroups: [], calendarItems: [] },
+    };
+    const impacts = detectLmsPlanImpacts(plan(), [task()], [task()], before, after);
+    expect(impacts).toContainEqual(expect.objectContaining({
+      id: 'course-added:c2',
+      kind: 'course_added',
+      courseId: 'c2',
+      title: 'Bạn được thêm vào môn học mới',
+      affectedBlockIds: [],
+    }));
+  });
+
+  it('detects a new course before the learner has created any plan', () => {
+    const impacts = detectLmsPlanImpacts(null, [], [], {}, {
+      c2: { courseId: 'c2', modules: [], resources: [], plannerItems: [], appointmentGroups: [], calendarItems: [] },
+    });
+    expect(impacts).toContainEqual(expect.objectContaining({ kind: 'course_added', courseId: 'c2' }));
+  });
+
   it('detects a deadline moved earlier within the same date and identifies late blocks', () => {
     const date = addDays(DEMO_TODAY, 1);
     const before = { ...task(date), dueAt: `${date}T23:59:00+07:00` };
@@ -36,10 +80,42 @@ describe('LMS planning constraints', () => {
     expect(lmsUnavailableSlots(course([event('e1', date)]))[0]).toMatchObject({ date, start: '19:00', end: '20:00', source: 'lms', readOnly: true });
   });
 
+  it('keeps future class constraints beyond the old fixed demo horizon', () => {
+    const date = addDays(DEMO_TODAY, 21);
+    expect(lmsUnavailableSlots(course([event('future-class', date)]))).toContainEqual(
+      expect.objectContaining({ date, start: '19:00', end: '20:00', source: 'lms' }),
+    );
+  });
+
+  it('deduplicates repeated imports of the same class interval', () => {
+    const date = addDays(DEMO_TODAY, 21);
+    const first = event('first-import', date);
+    const repeated = { ...first, id: 'second-import', source_id: 2 };
+
+    expect(lmsUnavailableSlots(course([first, repeated]))).toHaveLength(1);
+  });
+
   it('detects a newly added event that conflicts with a saved study block', () => {
     const date = addDays(DEMO_TODAY, 1);
     const impacts = detectLmsPlanImpacts(plan(date), [task()], [task()], course([]), course([event('e1', date)]));
     expect(impacts).toContainEqual(expect.objectContaining({ kind: 'schedule_conflict', taskId: 't1', deficitMin: 60, affectedBlockIds: ['b1'] }));
+  });
+
+  it('notifies the student about a teacher schedule change even when it does not conflict', () => {
+    const date = addDays(DEMO_TODAY, 1);
+    const impacts = detectLmsPlanImpacts(plan(date), [task()], [task()], course([]), course([event('e1', date, '15:00', '16:00')]));
+    expect(impacts).toContainEqual(expect.objectContaining({
+      kind: 'schedule_changed',
+      title: 'Giảng viên đã thay đổi lịch học',
+      deficitMin: 0,
+      affectedBlockIds: [],
+    }));
+  });
+
+  it('treats PaceWise instructor-authored lessons as fixed schedule constraints', () => {
+    const date = addDays(DEMO_TODAY, 1);
+    const authored = { ...event('teacher-1', date), event_kind: 'teaching_offline' };
+    expect(lmsUnavailableSlots(course([authored]))[0]).toMatchObject({ date, start: '19:00', end: '20:00' });
   });
 
   it('detects released capacity without modifying the plan', () => {

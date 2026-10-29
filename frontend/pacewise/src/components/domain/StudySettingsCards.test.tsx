@@ -36,6 +36,19 @@ describe('Study Settings controls', () => {
       { type: 'UPDATE_STUDY_PREFERENCES', patch: { breakMinutes: 5 } },
     ]);
   });
+  it('uses direct numeric inputs for every minute setting and ignores out-of-range values', () => {
+    render(<StudySettingsCards />);
+    expect(screen.getByLabelText('Nhắc Do trước (phút)')).toHaveAttribute('type', 'number');
+    expect(screen.getByLabelText('Tối đa mỗi ca ưu tiên (phút)')).toHaveAttribute('type', 'number');
+    expect(screen.getByLabelText('Nghỉ giữa phiên (phút)')).toHaveAttribute('type', 'number');
+    const checkpoint = screen.getByLabelText('Dự phòng checkpoint Assessment (phút mỗi phiên)');
+    expect(checkpoint).toHaveAttribute('type', 'number');
+    fireEvent.change(checkpoint, { target: { value: '12' } });
+    expect(fixture.dispatch).toHaveBeenCalledWith({ type: 'UPDATE_STUDY_PREFERENCES', patch: { checkpointMinutes: 12 } });
+    fixture.dispatch.mockClear();
+    fireEvent.change(checkpoint, { target: { value: '16' } });
+    expect(fixture.dispatch).not.toHaveBeenCalled();
+  });
   it('asks for device permissions only after clicking enable, and updates prefs after success', async () => {
     vi.mocked(enablePushNotifications).mockResolvedValue(undefined);
     render(<StudySettingsCards />);

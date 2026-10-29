@@ -2,27 +2,28 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.config import Settings, get_settings
 from src.course_source.db import Base, get_db
 from src.course_source.integration_api import require_service_key
-from src.course_source.models import Course, CourseLifecycle, Enrollment
+from src.course_source.models import Course, CourseLifecycle, Enrollment, GoogleIdentity, User
 from src.course_source.teacher_management import StrictModel, VersionInput, check_version, revision
 from src.course_source.telemetry import record_change
 
 router = APIRouter(prefix="/api/pacewise/v1/teacher", dependencies=[Depends(require_service_key)])
+_UNSET = object()
 
 
-def instructor(db, user_id):
-    if not db.scalar(select(Enrollment.id).where(Enrollment.user_id == user_id, Enrollment.role == "instructor")):
-        raise HTTPException(403, "Instructor enrollment required")
+def instructor(db, user_id, *, for_update=True):
+    user = db.get(User, user_id, with_for_update=for_update)
+    if not user or user.role != "instructor":
+        raise HTTPException(403, "Instructor account required")
 
 
 def owned(db, user_id, course_id):
-    from src.course_source.models import User
-
     db.get(User, user_id, with_for_update=True)
     if not db.scalar(
         select(Enrollment.id).where(
@@ -36,8 +37,9 @@ def owned(db, user_id, course_id):
     return course
 
 
-def course_json(db, course):
-    state = db.get(CourseLifecycle, course.id)
+def course_json(db, course, state=_UNSET):
+    if state is _UNSET:
+        state = db.get(CourseLifecycle, course.id)
     body = {
         "id": course.id,
         "code": course.code,
@@ -59,31 +61,46 @@ class CourseInput(StrictModel):
 
 @router.get("/courses")
 def courses(user_id: int, db: Session = Depends(get_db)):
-    instructor(db, user_id)
-    rows = db.scalars(
-        select(Course)
+    instructor(db, user_id, for_update=False)
+    rows = db.execute(
+        select(Course, CourseLifecycle)
         .join(Enrollment)
+        .outerjoin(CourseLifecycle, CourseLifecycle.course_id == Course.id)
         .where(Enrollment.user_id == user_id, Enrollment.role == "instructor")
         .order_by(Course.code)
     ).all()
-    return [course_json(db, row) for row in rows]
+    return [course_json(db, course, state) for course, state in rows]
 
 
 @router.get("/roster")
 def roster(user_id: int, db: Session = Depends(get_db)):
-    from src.course_source.models import User
-
     instructor(db, user_id)
-    owned_ids = select(Enrollment.course_id).where(Enrollment.user_id == user_id, Enrollment.role == "instructor")
+    # Demo directory: every student who completed Google sign-up can be
+    # selected directly, even before joining a course. Preserve the existing
+    # native/demo workflow for students already in one of this teacher's
+    # courses, while keeping unrelated native accounts hidden.
+    owned_ids = select(Enrollment.course_id).where(
+        Enrollment.user_id == user_id,
+        Enrollment.role == "instructor",
+    )
+    managed_student_ids = select(Enrollment.user_id).where(
+        Enrollment.course_id.in_(owned_ids),
+        Enrollment.role == "student",
+    )
+    google_student_ids = select(GoogleIdentity.user_id)
     members = db.scalars(
         select(User)
-        .join(Enrollment)
-        .where(Enrollment.course_id.in_(owned_ids), Enrollment.role == "student")
-        .distinct()
-        .order_by(User.full_name)
+        .where(
+            User.role == "student",
+            or_(User.id.in_(google_student_ids), User.id.in_(managed_student_ids)),
+        )
     ).all()
     # No emails, scores or evidence required by the enrollment picker.
-    return [{"id": item.id, "name": item.full_name} for item in members]
+    # Names are encrypted at rest, so database ordering would sort ciphertext.
+    return [
+        {"id": item.id, "name": item.full_name}
+        for item in sorted(members, key=lambda item: (item.full_name.casefold(), item.id))
+    ]
 
 
 def check_code(db, code, except_id=None):
@@ -97,19 +114,39 @@ def check_code(db, code, except_id=None):
 
 
 @router.post("/courses", status_code=201)
-def create_course(payload: CourseInput, user_id: int, db: Session = Depends(get_db)):
-    from src.course_source.membership import emails, invite_many, notify_membership, throttle
+def create_course(
+    payload: CourseInput,
+    user_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    from src.course_source.membership import (
+        auto_enroll_google_students,
+        emails,
+        invite_many,
+        notify_membership,
+        shared_catalog_teacher_id,
+        throttle,
+    )
     from src.course_source.models import User
 
     instructor(db, user_id)
     addresses = emails(payload.invite_emails)
-    if addresses:
+    shared_catalog_owner = (
+        settings.google_signup_auto_enroll_courses
+        and shared_catalog_teacher_id(db, settings.google_signup_auto_enroll_teacher_email) == user_id
+    )
+    manual_invites = [] if shared_catalog_owner else addresses
+    if manual_invites:
         throttle(db, user_id)
     db.get(User, user_id, with_for_update=True)
     check_code(db, payload.code)
     allowed = {item["id"] for item in roster(user_id, db)}
     if not set(payload.student_ids) <= allowed:
-        raise HTTPException(403, "Chỉ thêm sinh viên thuộc lớp bạn đang quản lý.")
+        raise HTTPException(
+            403,
+            "Chỉ thêm được sinh viên đã đăng ký bằng Google hoặc đang thuộc lớp bạn quản lý.",
+        )
     row = Course(code=payload.code, name=payload.name, term=payload.term, color="#4169E1", published=True)
     db.add(row)
     try:
@@ -119,13 +156,19 @@ def create_course(payload: CourseInput, user_id: int, db: Session = Depends(get_
         raise HTTPException(409, "Mã môn đã tồn tại. Tải lại danh sách và chọn mã khác.") from exc
     db.add(Enrollment(user_id=user_id, course_id=row.id, role="instructor"))
     db.add(CourseLifecycle(course_id=row.id, archived=False))
+    db.flush()
+    if shared_catalog_owner:
+        auto_enroll_google_students(db, row.id, user_id, settings.google_signup_auto_enroll_teacher_email)
     for member in set(payload.student_ids):
-        db.add(Enrollment(user_id=member, course_id=row.id, role="student"))
+        if not db.scalar(
+            select(Enrollment.id).where(Enrollment.user_id == member, Enrollment.course_id == row.id)
+        ):
+            db.add(Enrollment(user_id=member, course_id=row.id, role="student"))
     db.flush()
     for member in set(payload.student_ids):
         notify_membership(db, row.id, member, user_id)
-    if addresses:
-        invite_many(db, row.id, user_id, addresses)
+    if manual_invites:
+        invite_many(db, row.id, user_id, manual_invites)
     record_change(
         db, actor_user_id=user_id, action="course.created", entity_type="course", entity_id=row.id, course_id=row.id
     )
@@ -177,12 +220,23 @@ def archive(course_id: int, payload: VersionInput, user_id: int, db: Session = D
 
 
 @router.post("/courses/{course_id}/restore")
-def restore(course_id: int, payload: VersionInput, user_id: int, db: Session = Depends(get_db)):
+def restore(
+    course_id: int,
+    payload: VersionInput,
+    user_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
     row = owned(db, user_id, course_id)
     check_version(payload.expected_version, course_json(db, row)["version"])
     lifecycle = db.get(CourseLifecycle, row.id)
     if lifecycle:
         lifecycle.archived = False
+    db.flush()
+    if settings.google_signup_auto_enroll_courses:
+        from src.course_source.membership import auto_enroll_google_students
+
+        auto_enroll_google_students(db, row.id, user_id, settings.google_signup_auto_enroll_teacher_email)
     record_change(
         db,
         actor_user_id=user_id,

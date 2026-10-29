@@ -71,4 +71,19 @@ describe('CourseSwitcher success notification preference', () => {
     })));
     expect(mocks.toast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: 'success' }));
   });
+
+  it('can open the compact menu to the right of a left-edge trigger without clipping', () => {
+    render(<CourseSwitcher compact menuAlign="left" />);
+
+    const menu = screen.getByText('Nội dung Hỏi đáp dùng dữ liệu của môn đang chọn.').parentElement?.parentElement;
+    expect(menu).toHaveClass('left-0');
+    expect(menu).not.toHaveClass('right-0');
+  });
+
+  it('keeps right alignment as the compact menu default', () => {
+    render(<CourseSwitcher compact />);
+
+    const menu = screen.getByText('Nội dung Hỏi đáp dùng dữ liệu của môn đang chọn.').parentElement?.parentElement;
+    expect(menu).toHaveClass('right-0');
+  });
 });

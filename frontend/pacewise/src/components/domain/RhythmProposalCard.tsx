@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/AppStore';
 import type { RhythmReport, RhythmTrialSummary } from '../../types';
 import { Button } from '../ui/Button';
 import { activityLabels } from '../../utils/studyPreferences';
+import { useLocale } from '../../i18n/LocaleContext';
 
 const percentage = (value: number | null | undefined) => value == null ? 'Chưa có dữ liệu' : `${Math.round(value * 100)}%`;
 function TrialSummary({ label, summary }: { label: string; summary: RhythmTrialSummary | null | undefined }) {
@@ -21,6 +22,7 @@ function TrialSummary({ label, summary }: { label: string; summary: RhythmTrialS
 
 export function RhythmProposalCard() {
   const { state, dispatch } = useAppStore();
+  const { t } = useLocale();
   const [report, setReport] = useState<RhythmReport | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,7 +59,9 @@ export function RhythmProposalCard() {
         </details>
         <Button className="mt-3" size="sm" loading={busy} onClick={() => void confirm()}>Xác nhận thử nhịp mới</Button>
         <p className="caption mt-2">Chỉ cập nhật preference và tự lưu. Tổng công việc không giảm; lịch đã xác nhận không đổi. Khi muốn đổi lịch, phân tích lại và xác nhận bản preview.</p>
-      </> : <p className="text-muted">{report?.status === 'disabled' ? 'Đã tắt đề xuất nhịp tự động.' : 'Chưa đủ bằng chứng tương đồng để đề xuất nhịp khác. Giữ lựa chọn của bạn.'}</p>}
+      </> : <p className="text-muted">{report?.status === 'disabled'
+        ? t('Đã tắt đề xuất nhịp tự động.', 'Automatic rhythm suggestions are turned off.')
+        : t('Chưa đủ bằng chứng tương đồng để đề xuất nhịp khác. Giữ lựa chọn của bạn.', 'There is not enough comparable evidence to suggest a different rhythm. Your current choices remain unchanged.')}</p>}
     {report?.comparison?.before && <p className="caption mt-2">Theo dõi thử nhịp: {report.comparison.before.sessions} phiên trước · {report.comparison.after?.sessions ?? 0} phiên sau tương đồng.
       {report.comparison.status === 'descriptive_not_causal' ? ' Có số liệu mô tả, chưa chứng minh hiệu quả nhân quả.' : ' Chưa đủ dữ liệu so sánh; chưa kết luận nhịp nào tốt hơn.'}</p>}
     {report?.comparison?.before && <details className="mt-2"><summary className="cursor-pointer">Tiến độ và bằng chứng Assessment trước/sau</summary>

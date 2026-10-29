@@ -3,6 +3,7 @@
 Embeddings are deterministic test vectors, not an evaluation of semantic model quality.
 """
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -191,6 +192,45 @@ def hits(versions):
     return rag.search_course_materials(
         "relation", institution_id=get_settings().institution_id, course_id="77", authorized_file_versions=versions
     )["passages"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_course_subject_mismatch_is_not_indexed(monkeypatch):
+    settings = get_settings()
+    data = b"valid-placeholder"
+    item = {
+        "id": 501,
+        "title": "Co_So_Du_Lieu.docx",
+        "kind": "assignment_guide",
+        "content_role": "student_assignment_brief",
+        "course_name": "Nhập môn lập trình Python",
+        "source_url": "/api/files/course-77-database.docx",
+        "latest_version": {
+            "version": 1,
+            "checksum_sha256": hashlib.sha256(data).hexdigest(),
+        },
+    }
+    client = AsyncMock()
+    client.service_get.return_value = [item]
+    client.download_course_file.return_value = data
+    monkeypatch.setattr(
+        lms_files,
+        "bounded_extract",
+        AsyncMock(return_value=[{
+            "section_title": "BÀI TẬP MÔN CƠ SỞ DỮ LIỆU",
+            "content": "BÀI TẬP MÔN CƠ SỞ DỮ LIỆU",
+        }]),
+    )
+
+    await lms_files.sync_course_files(client, settings, 77, "CS101")
+    assert await lms_files.process_file_extractions(client, settings) == 1
+
+    with SessionLocal() as db:
+        row = db.get(LmsFileIndex, f"{settings.institution_id}:77:501")
+        assert row.status == "failed"
+        assert row.failure_reason == "CourseSubjectMismatchError"
+        assert "tên môn khác" in row.last_error
+        assert json.loads(row.chunks_json) == []
 
 
 @pytest.mark.asyncio

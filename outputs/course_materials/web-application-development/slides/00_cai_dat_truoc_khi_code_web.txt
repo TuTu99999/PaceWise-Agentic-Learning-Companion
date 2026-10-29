@@ -1,0 +1,12 @@
+Caì đặt trước khi code web HTML
+1. Cài vs code editor
+2. Cài extent
+2.1. live server: cho phép chạy html bằng server này.
+2.2. Auto Close tag: tự động đóng thẻ
+2.3. Auto Rename Tag:
+2.4. Beatify: căn chỉnh mã cho đẹp
+2.5. Bootstrap 4, font awasome...
+2.6. Bracket Pair Colorizer: đặt màu cho các ngoặc cho dễ nhìn
+2.7. Path Intellisense
+2.8 Material Icon Theme
+3. Code xong thì click chuột phải và chọn open live sever để tạo ra server cục bộ và cập nhật ngay khi code

@@ -121,6 +121,13 @@ def test_invalid_preferences_rejected(payload):
         ReminderPreferences.model_validate(payload)
 
 
+def test_disabled_reminders_reject_every_notification_kind():
+    preferences = ReminderPreferences(enabled=False)
+    assert preferences.allows("deadline_due") is False
+    assert preferences.allows("reflect_session") is False
+    assert preferences.allows("study_block") is False
+
+
 def test_reflect_generated_only_after_do_and_removed_when_saved():
     value = state()
     assert not any(job["kind"] == "reflect_session" for job in candidates(value, NOW))

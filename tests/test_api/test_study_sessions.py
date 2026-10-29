@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -103,7 +103,9 @@ async def test_prepare_is_canonical_light_scoped_and_revalidates_acl(client, tim
     visible.append(11)
     agent = AsyncMock(return_value={"workflow": "qa", "status": "completed", "response": "Guided support", "source_refs": []})
     monkeypatch.setattr(app.state, "agent", SimpleNamespace(ainvoke=agent), raising=False)
+    await start(client)
     response = await client.post('/api/v1/chat', json={"workflow": "qa", "message": "Explain this step",
+        "qa_history": [{"role": "user", "content": "FORGED OTHER SESSION"}],
         "context": {"do_course_id": 1, "do_block_id": "b1", "allowed_resource_ids": ["file:12"]}})
     assert response.status_code == 200, response.text
     context = agent.await_args.args[0]
@@ -111,7 +113,19 @@ async def test_prepare_is_canonical_light_scoped_and_revalidates_acl(client, tim
     assert context["preferred_resource_ids"] == ["assignment:1:a", "file:11"]
     assert context["do_scope"]["module_ids"] == ["3"]
     assert context["do_session"]["objective"] == data["objective"]
+    assert context["qa_history"] == []
     assert len(context["assignments"]) == 1 and len(calls) == 15
+    history = (await client.get("/api/v1/study-sessions/chat?courseId=1&blockId=b1")).json()["messages"]
+    assert [(item["role"], item["text"]) for item in history] == [
+        ("student", "Explain this step"), ("assistant", "Guided support"),
+    ]
+    response = await client.post('/api/v1/chat', json={"workflow": "qa", "message": "What about that?",
+        "context": {"do_course_id": 1, "do_block_id": "b1"}})
+    assert response.status_code == 200
+    assert agent.await_args.args[0]["qa_history"] == [
+        {"role": "user", "content": "Explain this step"},
+        {"role": "assistant", "content": "Guided support"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -152,6 +166,50 @@ async def test_session_keeps_confirmed_activity_and_rhythm_not_later_preferences
     assert evaluation["activity_type"] == "coding"
     assert evaluation["rhythm"] == row["rhythm"]
     assert evaluation["checkpoint_minutes"] == 5
+
+
+@pytest.mark.asyncio
+async def test_future_planned_block_cannot_start_before_prerequisite_boundary(client, timer_env):
+    factory, clock, _ = timer_env
+    with factory() as db:
+        memory = db.get(LearnerMemory, "rhythm-test:9001:1")
+        profile = json.loads(memory.profile_json)
+        profile["last_confirmed_plan"]["blocks"][0]["earliestStartAt"] = "2026-10-10T16:00:00+07:00"
+        memory.profile_json = json.dumps(profile)
+        db.commit()
+
+    waiting = await client.post("/api/v1/study-sessions", json={"courseId": 1, "blockId": "b1"})
+    assert waiting.status_code == 409
+    assert "prerequisite learning" in waiting.text
+
+    clock[0] = datetime(2026, 10, 10, 9, tzinfo=UTC)
+    started = await client.post("/api/v1/study-sessions", json={"courseId": 1, "blockId": "b1"})
+    assert started.status_code == 200, started.text
+
+
+@pytest.mark.asyncio
+async def test_complete_uses_structured_work_result_and_remaining_minutes(client, timer_env):
+    _, clock, _ = timer_env
+    row = await start(client)
+    for index in range(3):
+        clock[0] += timedelta(seconds=20)
+        row = (await event(client, row, "checkpoint", f"structured-checkpoint-{index:02d}")).json()
+    result = await event(
+        client,
+        row,
+        "complete",
+        workResult="needs_more_time",
+        additionalMinutes=25,
+        understandingSelfReport="needs_review",
+    )
+    assert result.status_code == 200, result.text
+    evaluation = result.json()["evaluation"]
+    assert evaluation["status"] == "needs_more_time"
+    assert evaluation["work_result"] == "needs_more_time"
+    assert evaluation["remaining_minutes"] == 25
+    assert evaluation["understanding_self_report"] == "needs_review"
+    assert evaluation["needs_recovery"] is True
+    assert evaluation["completion_percent_source"] == "derived_from_remaining_minutes"
 
 
 @pytest.mark.asyncio
@@ -213,6 +271,32 @@ async def test_retry_after_response_loss_does_not_add_time_or_duplicate_completi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["complete", "cancel"])
+async def test_terminal_do_action_erases_encrypted_chat_transcript(client, timer_env, action):
+    from src.services.do_chat_memory import append_turn
+
+    factory, _, _ = timer_env
+    row = await start(client)
+    with factory() as db:
+        saved = db.get(StudyTimerSession, row["id"])
+        append_turn(saved, question="Câu hỏi riêng", response="Câu trả lời có nguồn", kind="grounded", source_refs=[])
+        db.commit()
+        raw = db.execute(text(
+            "SELECT chat_json FROM pacewise_study_timer_sessions WHERE id = :id"
+        ), {"id": row["id"]}).scalar_one()
+        assert raw.startswith("pwenc:v1:")
+        assert "Câu hỏi riêng" not in raw
+    restored = (await client.get("/api/v1/study-sessions/chat?courseId=1&blockId=b1")).json()
+    assert [item["text"] for item in restored["messages"]] == ["Câu hỏi riêng", "Câu trả lời có nguồn"]
+
+    response = await event(client, row, action, f"terminal-{action}-01", completionPercent=100)
+    assert response.status_code == 200
+    assert (await client.get("/api/v1/study-sessions/chat?courseId=1&blockId=b1")).json()["messages"] == []
+    with factory() as db:
+        assert db.get(StudyTimerSession, row["id"]).chat_json == "[]"
+
+
+@pytest.mark.asyncio
 async def test_stale_tab_and_reused_key_with_different_body_are_rejected(client, timer_env):
     row = await start(client)
     assert (await event(client, row, "checkpoint")).status_code == 200
@@ -244,6 +328,170 @@ async def test_one_active_block_per_learner_and_cancelled_block_can_restart(clie
 
 
 @pytest.mark.asyncio
+async def test_cross_course_confirmed_plan_does_not_cancel_active_do_on_restore(client, timer_env):
+    factory, _, _ = timer_env
+    with factory() as db:
+        scoped = db.get(LearnerMemory, "rhythm-test:9001:1")
+        profile = json.loads(scoped.profile_json)
+        scoped.profile_json = "{}"
+        db.add(LearnerMemory(
+            id="rhythm-test:9001:2",
+            institution_id="rhythm-test",
+            user_id=9001,
+            course_id=2,
+            profile_json=json.dumps(profile),
+            mastery_json="{}",
+            misconceptions_json="[]",
+            history_json="[]",
+        ))
+        db.commit()
+
+    row = await start(client)
+    restored = (await client.get("/api/v1/study-sessions/current?blockId=b1")).json()
+
+    assert restored["session"]["id"] == row["id"]
+    assert restored["session"]["status"] == "running"
+    assert restored["activeSession"]["id"] == row["id"]
+
+
+@pytest.mark.asyncio
+async def test_restore_repairs_a_false_cross_course_plan_cancel_without_losing_time(client, timer_env):
+    factory, _, _ = timer_env
+    row = await start(client)
+    with factory() as db:
+        scoped = db.get(LearnerMemory, "rhythm-test:9001:1")
+        profile = json.loads(scoped.profile_json)
+        scoped.profile_json = "{}"
+        db.add(LearnerMemory(
+            id="rhythm-test:9001:2",
+            institution_id="rhythm-test",
+            user_id=9001,
+            course_id=2,
+            profile_json=json.dumps(profile),
+            mastery_json="{}",
+            misconceptions_json="[]",
+            history_json="[]",
+        ))
+        saved = db.get(StudyTimerSession, row["id"])
+        state = json.loads(saved.state_json)
+        state.update(status="cancelled", observed_seconds=37, auto_cancel_reason="plan_replaced",
+                     cancelled_at="2026-10-10T08:00:00+00:00")
+        saved.state_json = json.dumps(state)
+        saved.active_scope = None
+        saved.version += 1
+        db.commit()
+
+    restored = (await client.get("/api/v1/study-sessions/current?blockId=b1")).json()
+
+    assert restored["session"]["status"] == "paused"
+    assert restored["session"]["observed_seconds"] == 37
+    assert restored["activeSession"]["id"] == row["id"]
+    assert "auto_cancel_reason" not in restored["session"]
+
+
+def test_background_cleanup_finds_cross_course_confirmed_plan(timer_env, monkeypatch):
+    from src.services import do_chat_memory
+    from src.services.do_chat_memory import append_turn
+
+    factory, clock, _ = timer_env
+    with factory() as db:
+        scoped = db.get(LearnerMemory, "rhythm-test:9001:1")
+        profile = json.loads(scoped.profile_json)
+        scoped.profile_json = "{}"
+        db.add(LearnerMemory(
+            id="rhythm-test:9001:2",
+            institution_id="rhythm-test",
+            user_id=9001,
+            course_id=2,
+            profile_json=json.dumps(profile),
+            mastery_json="{}",
+            misconceptions_json="[]",
+            history_json="[]",
+        ))
+        row = StudyTimerSession(
+            id="SS-cross-course-plan", institution_id="rhythm-test", user_id=9001, course_id=1,
+            block_id="b1", task_id="1:a", active_scope="rhythm-test:9001", version=1,
+            state_json=json.dumps({"status": "running"}),
+        )
+        db.add(row)
+        append_turn(row, question="Cần giữ", response="Vẫn còn hiệu lực", kind="conversation", source_refs=[])
+        db.commit()
+
+    monkeypatch.setattr(do_chat_memory, "SessionLocal", factory)
+    settings = app.dependency_overrides[get_settings]()
+    assert do_chat_memory.purge_expired_transcripts(settings, at=clock[0]) == 0
+    with factory() as db:
+        assert json.loads(db.get(StudyTimerSession, "SS-cross-course-plan").chat_json)
+
+
+@pytest.mark.asyncio
+async def test_expired_active_block_is_auto_cancelled_and_no_longer_blocks_do(client, timer_env):
+    factory, clock, _ = timer_env
+    row = await start(client)
+    from src.services.do_chat_memory import append_turn
+    with factory() as db:
+        saved = db.get(StudyTimerSession, row["id"])
+        append_turn(saved, question="Sẽ hết hạn", response="Tạm thời", kind="conversation", source_refs=[])
+        db.commit()
+    clock[0] = datetime(2026, 10, 10, 10, 1, tzinfo=UTC)  # 17:01 in the configured app timezone.
+    current = (await client.get("/api/v1/study-sessions/current?blockId=b1")).json()
+    assert current["activeSession"] is None
+    assert current["session"]["status"] == "cancelled"
+    assert current["session"]["auto_cancel_reason"] == "block_ended"
+    with factory() as db:
+        saved = db.get(StudyTimerSession, row["id"])
+        assert saved.active_scope is None
+        assert saved.chat_json == "[]"
+        assert json.loads(saved.state_json)["status"] == "cancelled"
+
+
+def test_background_cleanup_erases_expired_transcript_without_a_return_visit(timer_env, monkeypatch):
+    from src.services import do_chat_memory
+
+    factory, clock, _ = timer_env
+    with factory() as db:
+        row = StudyTimerSession(
+            id="SS-background-expiry", institution_id="rhythm-test", user_id=9001, course_id=1,
+            block_id="b1", task_id="1:a", active_scope="rhythm-test:9001", version=1,
+            state_json=json.dumps({"status": "paused"}),
+        )
+        db.add(row)
+        db.flush()
+        do_chat_memory.append_turn(
+            row, question="Temporary", response="Temporary response", kind="grounded", source_refs=[]
+        )
+        db.commit()
+    monkeypatch.setattr(do_chat_memory, "SessionLocal", factory, raising=False)
+    settings = app.dependency_overrides[get_settings]()
+    clock[0] = datetime(2026, 10, 10, 10, 1, tzinfo=UTC)
+    assert do_chat_memory.purge_expired_transcripts(settings, at=clock[0]) == 1
+    with factory() as db:
+        assert db.get(StudyTimerSession, "SS-background-expiry").chat_json == "[]"
+
+
+@pytest.mark.asyncio
+async def test_replaced_active_block_is_auto_cancelled_before_starting_new_do(client, timer_env):
+    factory, _, _ = timer_env
+    old = await start(client)
+    with factory() as db:
+        memory = db.get(LearnerMemory, "rhythm-test:9001:1")
+        profile = json.loads(memory.profile_json)
+        profile["last_confirmed_plan"]["blocks"] = [
+            {"id": "b2", "taskId": "1:a", "date": "2026-10-10", "start": "16:00", "end": "17:00"}
+        ]
+        memory.profile_json = json.dumps(profile)
+        db.commit()
+    replacement = await client.post("/api/v1/study-sessions", json={"courseId": 1, "blockId": "b2"})
+    assert replacement.status_code == 200, replacement.text
+    assert replacement.json()["blockId"] == "b2"
+    with factory() as db:
+        stale = db.get(StudyTimerSession, old["id"])
+        state = json.loads(stale.state_json)
+        assert stale.active_scope is None
+        assert state["status"] == "cancelled" and state["auto_cancel_reason"] == "plan_replaced"
+
+
+@pytest.mark.asyncio
 async def test_note_checkpoint_survives_reload_recovery(client, timer_env):
     row = await start(client)
     row = (await event(client, row, "checkpoint", note="Learner draft note")).json()
@@ -261,16 +509,24 @@ async def test_start_is_idempotent_and_requires_confirmed_enrolled_block(client,
 
 @pytest.mark.asyncio
 async def test_other_user_and_teacher_cannot_read_or_mutate_timer(client, timer_env):
-    _, _, user = timer_env
+    from src.services.do_chat_memory import append_turn
+
+    factory, _, user = timer_env
     row = await start(client)
+    with factory() as db:
+        saved = db.get(StudyTimerSession, row["id"])
+        append_turn(saved, question="Private question", response="Private answer", kind="grounded", source_refs=[])
+        db.commit()
     other = replace(user, user_id=9002)
     app.dependency_overrides[require_csrf] = lambda: other
     app.dependency_overrides[get_current_session] = lambda: other
     assert (await event(client, row, "pause")).status_code == 404
     assert (await client.get("/api/v1/study-sessions/current?blockId=b1")).json()["session"] is None
+    assert (await client.get("/api/v1/study-sessions/chat?courseId=1&blockId=b1")).json()["messages"] == []
     teacher = replace(user, role="instructor")
     app.dependency_overrides[get_current_session] = lambda: teacher
     assert (await client.get("/api/v1/study-sessions/current?blockId=b1")).status_code == 403
+    assert (await client.get("/api/v1/study-sessions/chat?courseId=1&blockId=b1")).status_code == 403
 
 
 @pytest.mark.asyncio

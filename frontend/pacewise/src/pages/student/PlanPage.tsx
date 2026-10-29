@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PlanCalendarBoard } from '../../components/domain/PlanCalendarBoard';
 import { PlanDraftNotice } from '../../components/domain/PlanDraftNotice';
@@ -14,19 +14,24 @@ import { useToast } from '../../components/ui/Toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { confirmPlan, generatePlan, proposeWeeklyGoals } from '../../services/api';
 import { canConfirmPlan, partialPlanPreview, planBlockIssueLabel } from '../../utils/planConfirmation';
-import { hasExpiredDraftWork, isExpiredTask, isOpenPlanningTask } from '../../utils/planningScope';
+import { hasExpiredDraftWork, isExpiredTask, isOpenPlanningTask, remainingTaskMinutes } from '../../utils/planningScope';
 import { useAppStore } from '../../store/AppStore';
 import type { PersonalSlotCategory, PlanInput, TimeBlock, UnavailableSlot, WeeklyGoal } from '../../types';
 import { lmsUnavailableSlots, mergeUnavailable } from '../../utils/lmsPlanning';
 import { pinnedBlocksForReanalysis } from '../../utils/planPins';
-import { buildPlanTimeline, hidePastStudentCalendarItems, type PlanTimelineItem } from '../../utils/planTimeline';
+import { buildPlanTimeline, type PlanTimelineItem } from '../../utils/planTimeline';
 import { routineAvailability, routineSleepSlots } from '../../utils/routine';
 import { studyBlockAccess } from '../../utils/studyBlockAccess';
 import { blockDeadlineError, blockTimestamp, confirmedBlockIssue, personalSlotTimeError } from '../../utils/calendarEditing';
 import { calendarToday, useCalendarNow } from '../../hooks/useCalendarToday';
-import { addDays, APP_TIMEZONE, calendarWeekStart, diffDays, durationMin, formatDM, formatDuration, TASK_SELECTION_HORIZON_DAYS, toClock, toMin, uid, weekdayOf, weekDates } from '../../utils/time';
+import { useLocale } from '../../i18n/LocaleContext';
+import { addDays, APP_TIMEZONE, calendarWeekStart, diffDays, durationMin, formatDM, formatDuration, PLANNING_WINDOW_DAYS, toClock, toMin, uid, weekdayOf, weekDates } from '../../utils/time';
 
 type CalendarView = 'week' | 'month' | 'next7';
+
+const ANALYSIS_PANE_MIN_HEIGHT = 46;
+const ANALYSIS_PANE_DEFAULT_HEIGHT = 128;
+const ANALYSIS_PANE_COLLAPSED_HEIGHT = 60;
 
 const monthStartOf = (date: string) => `${date.slice(0, 7)}-01`;
 const addMonths = (date: string, offset: number) => {
@@ -45,9 +50,14 @@ const scheduledWorkMinutes = (block: Pick<TimeBlock, 'start' | 'end' | 'checkpoi
   Math.max(0, durationMin(block.start, block.end) - Math.max(0, block.checkpointMinutes ?? 0))
 );
 
-const planErrorDescription = (error: unknown) => {
+const planErrorDescription = (error: unknown, locale: 'vi' | 'en') => {
   if (!(error instanceof Error) || !('code' in error)) return 'Dữ liệu kéo thả vẫn được giữ. Hãy thử lại.';
   const apiError = error as Error & { code: string; requestId?: string; retryAfterSeconds?: number };
+  if (apiError.message.includes('Plan has blocking constraints')) {
+    return locale === 'en'
+      ? 'The draft no longer satisfies the current calendar constraints. Run AI reanalysis before applying it. Your drag-and-drop changes are still saved.'
+      : 'Bản nháp không còn đáp ứng các ràng buộc lịch hiện tại. Hãy AI phân tích lại trước khi áp dụng; dữ liệu kéo thả vẫn được giữ.';
+  }
   if (apiError.code === 'RATE_LIMITED' && apiError.retryAfterSeconds) {
     return `${apiError.message} Thử lại sau ${apiError.retryAfterSeconds} giây. Dữ liệu kéo thả vẫn được giữ.`;
   }
@@ -56,6 +66,7 @@ const planErrorDescription = (error: unknown) => {
 
 export function PlanPage() {
   useDocumentTitle('Plan');
+  const { locale, t } = useLocale();
   const { state, dispatch, persistence, retrySave } = useAppStore();
   const now = useCalendarNow();
   const today = calendarToday(new Date(now));
@@ -63,12 +74,14 @@ export function PlanPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
   const reanalysisStarted = useRef(new Set<string>());
-  const initialStart = calendarWeekStart(today);
   const [anchorDate, setAnchorDate] = useState(today);
   const [calendarView, setCalendarView] = useState<CalendarView>('week');
   const [calendarSource, setCalendarSource] = useState<'applied' | 'draft' | null>(null);
-  const showingApplied = (calendarSource ?? (state.calendarDraft ? 'draft' : state.plan ? 'applied' : 'draft')) === 'applied' && Boolean(state.plan);
-  const blocks = useMemo(() => showingApplied ? state.plan!.blocks : state.calendarDraft?.blocks ?? state.planDraft?.blocks
+  const showingApplied = (calendarSource ?? (state.calendarDraft || state.planDraft ? 'draft' : state.plan ? 'applied' : 'draft')) === 'applied' && Boolean(state.plan);
+  // Confirming a plan separates executable blocks from longer-horizon
+  // tentative blocks. Both remain visible on the applied calendar; tentative
+  // blocks simply cannot start until a later reanalysis confirms them.
+  const blocks = useMemo(() => showingApplied ? [...state.plan!.blocks, ...state.provisionalBlocks] : state.calendarDraft?.blocks ?? state.planDraft?.blocks
     ?? [...(state.plan?.blocks ?? []), ...state.provisionalBlocks], [showingApplied, state.calendarDraft, state.planDraft, state.plan, state.provisionalBlocks]);
   const [unavailable, setUnavailable] = useState<UnavailableSlot[]>(editablePersonalSlots(state.unavailable));
   const needsAnalysis = Boolean(state.calendarDraft?.needsAnalysis);
@@ -76,9 +89,9 @@ export function PlanPage() {
     if (!generating && !saving) { dispatch({ type: 'SAVE_CALENDAR_DRAFT', blocks: next }); setCalendarSource('draft'); }
   };
   const [filterOpen, setFilterOpen] = useState(false);
-  const [courseFilter, setCourseFilter] = useState('all');
+  const [courseFilter, setCourseFilter] = useState(() => searchParams.get('courseId') ?? 'all');
   const [showPersonal, setShowPersonal] = useState(true);
-  const [toolsPanel, setToolsPanel] = useState<'tasks' | 'personal' | null>(null);
+  const [toolsPanel, setToolsPanel] = useState<'personal' | null>(null);
   const [legendOpen, setLegendOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -94,19 +107,73 @@ export function PlanPage() {
   const [weeklyGoals, setWeeklyGoals] = useState<WeeklyGoal[]>(
     state.planDraft?.weeklyGoals ?? state.wizardInput?.weeklyGoals ?? [],
   );
+  const [analysisPaneHeight, setAnalysisPaneHeight] = useState(ANALYSIS_PANE_DEFAULT_HEIGHT);
+  const [resizingAnalysis, setResizingAnalysis] = useState(false);
+  const analysisResize = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null);
+  const calendarPage = useRef<HTMLDivElement>(null);
+  const calendarToolbar = useRef<HTMLElement>(null);
+  const analysisResizer = useRef<HTMLDivElement>(null);
+  const analysisPaneMaxHeight = () => {
+    const viewportWidth = typeof window === 'undefined' ? 1280 : window.innerWidth;
+    const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight;
+    const pageHeight = calendarPage.current?.clientHeight || Math.max(320, viewportHeight - 64);
+    const toolbarHeight = calendarToolbar.current?.offsetHeight || (viewportWidth < 640 ? 120 : 64);
+    const calendarReserve = Math.max(
+      viewportWidth < 640 ? 112 : 144,
+      Math.min(viewportWidth < 640 ? 180 : 240, pageHeight * 0.28),
+    );
+    const resizerHeight = analysisResizer.current?.offsetHeight || (viewportWidth < 640 ? 24 : 18);
+    return Math.max(ANALYSIS_PANE_MIN_HEIGHT, Math.floor(pageHeight - toolbarHeight - calendarReserve - resizerHeight));
+  };
+  const clampAnalysisPaneHeight = (height: number) => Math.min(
+    analysisPaneMaxHeight(),
+    Math.max(ANALYSIS_PANE_MIN_HEIGHT, height),
+  );
 
   useEffect(() => {
     if (!state.planDraft) return;
-    const draftStart = state.planDraft.weekStart ?? state.planDraft.input.weekStart ?? initialStart;
-    setAnchorDate(today >= draftStart && today <= addDays(draftStart, 6) ? today : draftStart < initialStart ? initialStart : draftStart);
     setWeeklyGoals(state.planDraft.weeklyGoals ?? state.planDraft.input.weeklyGoals ?? []);
-  }, [initialStart, state.planDraft, today]);
+  }, [state.planDraft]);
 
   useEffect(() => {
     // Personal schedule is owned by the hydrated workspace, not by an older
     // AI draft. Keep local calendar state in sync even when no draft exists.
     setUnavailable(editablePersonalSlots(state.unavailable));
   }, [state.unavailable]);
+
+  useEffect(() => {
+    const fitAnalysisPane = () => setAnalysisPaneHeight((height) => clampAnalysisPaneHeight(height));
+    fitAnalysisPane();
+    window.addEventListener('resize', fitAnalysisPane);
+    return () => window.removeEventListener('resize', fitAnalysisPane);
+    // Bounds are read from stable DOM refs whenever the viewport changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Listen on window instead of relying on pointer capture from the narrow
+    // separator. This keeps resizing active when the cursor enters the calendar
+    // or leaves the separator, including in embedded/local browser surfaces.
+    const move = (event: PointerEvent) => {
+      const active = analysisResize.current;
+      if (!active || active.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      setAnalysisPaneHeight(clampAnalysisPaneHeight(active.startHeight + event.clientY - active.startY));
+    };
+    const finish = (event: PointerEvent) => {
+      if (analysisResize.current?.pointerId !== event.pointerId) return;
+      analysisResize.current = null;
+      setResizingAnalysis(false);
+    };
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+  }, []);
 
   const monthStart = monthStartOf(anchorDate);
   const monthEnd = addDays(addMonths(monthStart, 1), -1);
@@ -122,7 +189,7 @@ export function PlanPage() {
     () => [...state.tasks]
       .filter((task) => isOpenPlanningTask(task, now))
       .sort((a, b) => a.deadline.localeCompare(b.deadline)),
-    [state.tasks, now],
+    [state.tasks, state.sessions, now],
   );
   const calendarItems = useMemo(() => Object.values(state.courseData).flatMap((course) => course.calendarItems ?? []), [state.courseData]);
   const routineConstraints = useMemo(() => routineSleepSlots(state.routineProfile), [state.routineProfile]);
@@ -130,15 +197,27 @@ export function PlanPage() {
     () => routineAvailability(state.routineProfile, state.availability),
     [state.availability, state.routineProfile],
   );
+  // Planning uses a rolling 7-day future window from today. Anchoring this to
+  // Monday silently shortened the usable horizon near the end of the week.
+  const planningRangeStart = today;
+  const planningRangeEnd = addDays(today, PLANNING_WINDOW_DAYS);
   const constraints = useMemo(
-    () => mergeUnavailable([...unavailable, ...routineConstraints], lmsUnavailableSlots(state.courseData)),
-    [routineConstraints, state.courseData, unavailable],
+    () => mergeUnavailable(
+      [...unavailable, ...routineConstraints],
+      lmsUnavailableSlots(state.courseData, { from: planningRangeStart, to: planningRangeEnd }),
+    ),
+    [planningRangeEnd, planningRangeStart, routineConstraints, state.courseData, unavailable],
   );
   const visibleBlocks = useMemo(() => blocks.filter((block) => block.date >= weekStart && block.date <= weekEnd), [blocks, weekEnd, weekStart]);
-  const timeline = useMemo(() => hidePastStudentCalendarItems(
-    buildPlanTimeline({ blocks: visibleBlocks, calendarItems, tasks: state.tasks, courses: state.courses, unavailable: constraints, from: weekStart, to: weekEnd }),
-    today,
-  ), [calendarItems, constraints, state.courses, state.tasks, today, visibleBlocks, weekEnd, weekStart]);
+  const timeline = useMemo(() => buildPlanTimeline({
+    blocks: visibleBlocks,
+    calendarItems,
+    tasks: state.tasks,
+    courses: state.courses,
+    unavailable: constraints,
+    from: weekStart,
+    to: weekEnd,
+  }), [calendarItems, constraints, state.courses, state.tasks, visibleBlocks, weekEnd, weekStart]);
   const filteredTimeline = useMemo(() => {
     const course = state.courses.find((item) => item.id === courseFilter);
     const taskIds = new Set(state.tasks.filter((task) => task.courseId === courseFilter).map((task) => task.id));
@@ -163,6 +242,16 @@ export function PlanPage() {
   const robustMissing = Math.max(0, ...(state.planDraft?.feasibility.robustShortfalls ?? []).map((item) => item.missingMin));
   const draftChecked = draftReady && !qualityWarning;
 
+  const availableTaskWorkMinutes = (taskId: string, ignoreId?: string) => {
+    const task = state.tasks.find((item) => item.id === taskId);
+    if (!task) return undefined;
+    const alreadyPlanned = blocks
+      .filter((block) => block.id !== ignoreId && block.taskId === taskId)
+      .filter((block) => block.status !== 'history')
+      .reduce((total, block) => total + scheduledWorkMinutes(block), 0);
+    return Math.max(0, remainingTaskMinutes(task, state.sessions) - alreadyPlanned);
+  };
+
   const selectView = (view: CalendarView) => {
     setCalendarView(view);
     if (view === 'month') setAnchorDate(monthStartOf(anchorDate));
@@ -183,14 +272,6 @@ export function PlanPage() {
     const deadlineError = blockDeadlineError(candidate, task);
     if (deadlineError) return deadlineError;
     if (durationMin(candidate.start, candidate.end) < 15) return 'Ca tự học phải dài ít nhất 15 phút.';
-    const alreadyPlanned = blocks
-      .filter((block) => block.id !== ignoreId && block.taskId === candidate.taskId)
-      .filter((block) => block.status !== 'history')
-      .reduce((total, block) => total + scheduledWorkMinutes(block), 0);
-    const remainingWork = Math.max(30, task.estimateMin - task.loggedMin);
-    if (alreadyPlanned + scheduledWorkMinutes(candidate) > remainingWork) {
-      return `Nhiệm vụ này chỉ còn ${formatDuration(Math.max(0, remainingWork - alreadyPlanned))} chưa được xếp.`;
-    }
     const availability = effectiveAvailability.find((day) => day.weekday === weekdayOf(candidate.date));
     const insideDeclaredStudyTime = constraints.some((slot) => (
       slot.category === 'self_study'
@@ -214,7 +295,7 @@ export function PlanPage() {
     if (!current) return;
     const duration = Math.max(15, durationMin(current.start, current.end));
     const boundedStart = Math.min(toMin(start), 24 * 60 - duration);
-    const candidate = { ...current, date, start: toClock(boundedStart), end: toClock(boundedStart + duration), placementSource: 'student' as const };
+    const candidate = { ...current, date, start: toClock(boundedStart), end: toClock(boundedStart + duration), placementSource: 'student' as const, outsidePreferred: false };
     const error = validateBlock(candidate, id);
     if (error) { toast({ tone: 'warning', title: 'Không thể dời block', description: error }); return; }
     editBlocks(blocks.map((block) => block.id === id ? candidate : block));
@@ -223,7 +304,7 @@ export function PlanPage() {
   const resizeBlock = (id: string, edge: 'start' | 'end', clock: string) => {
     const current = blocks.find((block) => block.id === id);
     if (!current) return;
-    const candidate = { ...current, [edge]: clock, placementSource: 'student' as const };
+    const candidate = { ...current, [edge]: clock, placementSource: 'student' as const, outsidePreferred: false };
     const error = validateBlock(candidate, id);
     if (error) { toast({ tone: 'warning', title: 'Không thể đổi thời lượng', description: error }); return; }
     editBlocks(blocks.map((block) => block.id === id ? candidate : block));
@@ -240,7 +321,7 @@ export function PlanPage() {
     const current = unavailable.find((slot) => slot.id === id);
     if (!current) return;
     const candidate = { ...current, [edge]: clock };
-    const error = personalSlotTimeError(candidate, now);
+    const error = personalSlotTimeError(candidate);
     if (error) {
       toast({ tone: 'warning', title: 'Không thể đổi hoạt động', description: error });
       return;
@@ -256,7 +337,7 @@ export function PlanPage() {
     const nextStart = toClock(boundedStart);
     const nextEnd = toClock(boundedStart + duration);
     const candidate = { ...current, date, weekday: weekdayOf(date), start: nextStart, end: nextEnd };
-    const error = personalSlotTimeError(candidate, now);
+    const error = personalSlotTimeError(candidate);
     if (error) {
       toast({ tone: 'warning', title: 'Không thể dời hoạt động', description: error });
       return;
@@ -275,7 +356,7 @@ export function PlanPage() {
     const current = unavailable.find((slot) => slot.id === id);
     if (!current) return;
     const candidate = { ...current, ...value, weekday: weekdayOf(value.date) };
-    const error = personalSlotTimeError(candidate, now);
+    const error = personalSlotTimeError(candidate);
     if (error) {
       toast({ tone: 'warning', title: 'Không thể cập nhật hoạt động', description: error });
       return;
@@ -314,6 +395,17 @@ export function PlanPage() {
       return;
     }
     const access = studyBlockAccess(block);
+    if (access.state === 'waiting_prerequisite') {
+      toast({
+        tone: 'warning',
+        title: t('Chưa tới phần kiến thức cần thiết', 'Prerequisite learning is not available yet'),
+        description: t(
+          'Phiên này đã được xếp trước cho tương lai. Bạn có thể bắt đầu sau khi buổi học liên quan kết thúc.',
+          'This session is planned for the future. You can start it after the related lesson ends.',
+        ),
+      });
+      return;
+    }
     if (access.state === 'ended') {
       toast({ tone: 'warning', title: 'Buổi tự học đã kết thúc', description: 'Block vẫn được giữ trên lịch sử. Hãy để Plan Agent sắp xếp lại phần chưa hoàn thành.' });
       return;
@@ -328,15 +420,29 @@ export function PlanPage() {
       toast({ tone: 'warning', title: 'Không thể đổi thời gian', description: error });
       return false;
     }
-    editBlocks(blocks.map((block) => block.id === learnerBlock.id ? learnerBlock : block));
-    toast({ tone: 'info', title: 'Đã cập nhật thời gian', description: 'Bấm AI phân tích lại để kiểm tra capacity và xung đột trước khi áp dụng.' });
+    const wasConfirmed = Boolean(state.plan?.blocks.some((block) => block.id === learnerBlock.id));
+    if (wasConfirmed) {
+      dispatch({ type: 'CONFIRM_MANUAL_BLOCK_TIME', block: learnerBlock });
+      setCalendarSource('draft');
+    } else {
+      editBlocks(blocks.map((block) => block.id === learnerBlock.id ? learnerBlock : block));
+    }
+    toast({
+      tone: 'info',
+      title: locale === 'en' ? 'Time updated' : 'Đã cập nhật thời gian',
+      description: wasConfirmed
+        ? (studyBlockAccess(learnerBlock).state === 'waiting_prerequisite'
+            ? (locale === 'en' ? 'The session remains planned for the future and will open after its prerequisite lesson.' : 'Ca vẫn được giữ trong lịch tương lai và sẽ mở sau buổi học tiên quyết.')
+            : (locale === 'en' ? 'This session can start now. AI planning will recalculate the remaining schedule.' : 'Ca này có thể bắt đầu ngay. Plan Agent sẽ tính lại phần lịch còn lại.'))
+        : (locale === 'en' ? 'Run AI planning to review this new session before applying it.' : 'Bấm AI phân tích để kiểm tra ca mới trước khi áp dụng.'),
+    });
     return true;
   };
 
   const addPersonalSlot = (date: string, start: string, category: PersonalSlotCategory, label: string, end?: string) => {
     if (generating || saving) return false;
     const slot: UnavailableSlot = { id: uid('personal-slot'), label, weekday: weekdayOf(date), date, start, end: end ?? toClock(Math.min(24 * 60, toMin(start) + 60)), source: 'manual', category };
-    const error = personalSlotTimeError(slot, now);
+    const error = personalSlotTimeError(slot);
     if (error) {
       toast({ tone: 'warning', title: 'Không thể thêm hoạt động', description: error });
       return false;
@@ -350,33 +456,34 @@ export function PlanPage() {
     return true;
   };
 
-  const tasksForHorizon = () => {
+  const tasksForHorizon = (includeTaskIds = new Set<string>()) => {
     const pinnedTaskIds = new Set(blocks.map((block) => block.taskId));
-    const planningWeekStart = calendarWeekStart(today);
-    const horizonEnd = addDays(planningWeekStart, TASK_SELECTION_HORIZON_DAYS - 1);
-    return openTasks.filter((task) => isOpenPlanningTask(task) && (pinnedTaskIds.has(task.id) || task.deadline <= horizonEnd));
+    const scopedTasks = courseFilter === 'all'
+      ? openTasks
+      : openTasks.filter((task) => task.courseId === courseFilter);
+    return scopedTasks.filter((task) => isOpenPlanningTask(task)
+      && (remainingTaskMinutes(task, state.sessions) > 0 || includeTaskIds.has(task.id))
+      && (pinnedTaskIds.has(task.id) || task.deadline <= planningRangeEnd));
   };
 
   const analyzeWithGoals = async (requestedGoals: WeeklyGoal[], replan?: {
-    contextKey: string; impactIds: string[]; trigger: 'reflection' | 'lms' | 'progress' | 'deadline';
+    contextKey: string; impactIds: string[]; trigger: 'reflection' | 'lms' | 'progress' | 'deadline' | 'preferences';
     scope?: 'activity' | 'weekly'; taskIds: string[];
   }) => {
-    const selected = tasksForHorizon();
-    if (selected.length === 0) { toast({ tone: 'warning', title: 'Chưa có nhiệm vụ để lập kế hoạch', description: 'LMS chưa có deadline trong 14 ngày tới.' }); return; }
-    const planningWeekStart = calendarWeekStart(today);
-    const horizonEnd = addDays(planningWeekStart, TASK_SELECTION_HORIZON_DAYS - 1);
+    const selected = tasksForHorizon(new Set(replan?.taskIds ?? []));
+    if (selected.length === 0) { toast({ tone: 'warning', title: 'Chưa có nhiệm vụ để lập kế hoạch', description: 'Chưa có nhiệm vụ đang mở trong 7 ngày tới.' }); return; }
     const selectedIds = new Set(selected.map(t => t.id));
     const goals = requestedGoals.map(g => ({ ...g, taskIds: g.taskIds.filter(id => selectedIds.has(id)) })).filter(g => g.taskIds.length > 0);
     const goalByTask = new Map(goals.flatMap((goal) => goal.taskIds.map((taskId) => [taskId, goal.id] as const)));
     const input: PlanInput = {
       studyPreferences: state.studyPreferences,
       goal: goals.map((goal) => goal.title).join('; '),
-      weekStart: planningWeekStart,
-      horizonEnd,
+      weekStart: planningRangeStart,
+      horizonEnd: planningRangeEnd,
       weeklyGoals: goals.map((goal) => ({ ...goal, confirmed: true })),
       tasks: selected.map((task) => ({
         taskId: task.id,
-        remainingMin: Math.max(30, task.estimateMin - task.loggedMin),
+        remainingMin: remainingTaskMinutes(task, state.sessions),
         weeklyGoalId: goalByTask.get(task.id),
       })),
       availability: effectiveAvailability,
@@ -413,14 +520,14 @@ export function PlanPage() {
             : 'Hãy xem lịch rồi xác nhận.',
       });
     } catch (error) {
-      toast({ tone: 'danger', title: 'AI chưa thể phân tích kế hoạch', description: planErrorDescription(error) });
+      toast({ tone: 'danger', title: t('AI chưa thể phân tích kế hoạch', 'AI could not analyze the plan'), description: planErrorDescription(error, locale) });
     } finally { setGenerating(false); }
   };
 
   const analyze = async () => {
     const selected = tasksForHorizon();
     if (selected.length === 0) {
-      toast({ tone: 'warning', title: 'Chưa có nhiệm vụ để lập kế hoạch', description: 'LMS chưa có deadline trong 14 ngày tới.' });
+      toast({ tone: 'warning', title: 'Chưa có nhiệm vụ để lập kế hoạch', description: 'Chưa có nhiệm vụ đang mở trong 7 ngày tới.' });
       return;
     }
     setLoadingGoals(true);
@@ -444,24 +551,24 @@ export function PlanPage() {
 
   useEffect(() => {
     const trigger = searchParams.get('reanalyze');
-    if (!trigger || !['reflection', 'lms', 'progress', 'deadline'].includes(trigger)) return;
+    if (!trigger || !['reflection', 'lms', 'progress', 'deadline', 'preferences'].includes(trigger)) return;
     // Opening a notification can mount Plan before workspace/LMS hydration.
     // Do not consume the hand-off against an empty task list.
     if (!state.workspaceReady || state.tasks.length === 0 || generating || loadingGoals || saving) return;
     const impactId = searchParams.get('impactId');
-    const selected = tasksForHorizon();
+    const requestedTaskId = searchParams.get('taskId');
+    const selected = tasksForHorizon(new Set(requestedTaskId ? [requestedTaskId] : []));
     const selectedIds = new Set(selected.map(task => task.id));
     const impactIds = state.planImpacts.filter(impact => impact.id === impactId || (trigger === 'lms'
-      && ['deadline_earlier', 'schedule_conflict', 'assignment_added'].includes(impact.kind)
+      && ['course_added', 'deadline_earlier', 'deadline_later', 'schedule_conflict', 'schedule_changed', 'capacity_released', 'assignment_added'].includes(impact.kind)
       && impact.taskId && selectedIds.has(impact.taskId))).map(impact => impact.id).sort();
-    const requestedTaskId = searchParams.get('taskId');
     const repairTaskIds = Array.from(new Set([
       ...(requestedTaskId && selectedIds.has(requestedTaskId) ? [requestedTaskId] : []),
       ...state.planImpacts.filter(impact => impactIds.includes(impact.id) && impact.taskId && selectedIds.has(impact.taskId))
         .map(impact => impact.taskId as string),
     ])).sort();
     const contextKey = JSON.stringify({ trigger, scope: searchParams.get('scope'), impactIds, taskId: searchParams.get('taskId'), planId: state.plan?.id,
-      tasks: selected.map(task => [task.id, task.dueAt ?? task.deadline, task.estimateMin, task.loggedMin]),
+      tasks: selected.map(task => [task.id, task.dueAt ?? task.deadline, remainingTaskMinutes(task, state.sessions)]),
       constraints, availability: state.availability, routine: state.routineProfile, preferences: state.studyPreferences,
       calendarDraft: state.calendarDraft?.updatedAt });
     if (reanalysisStarted.current.has(contextKey)) return;
@@ -490,7 +597,7 @@ export function PlanPage() {
     void analyzeWithGoals(goals, {
       contextKey,
       impactIds,
-      trigger: trigger as 'reflection' | 'lms' | 'progress' | 'deadline',
+      trigger: trigger as 'reflection' | 'lms' | 'progress' | 'deadline' | 'preferences',
       scope: searchParams.get('scope') === 'weekly' ? 'weekly' : searchParams.get('scope') === 'activity' ? 'activity' : undefined,
       taskIds: repairTaskIds,
     });
@@ -514,20 +621,44 @@ export function PlanPage() {
         navigate(`/study/${encodeURIComponent(block.taskId)}/session?blockId=${encodeURIComponent(block.id)}`);
       }
     }
-    catch (error) { toast({ tone: 'danger', title: 'Chưa thể lưu kế hoạch', description: error instanceof Error ? error.message : 'Bản nháp vẫn được giữ.' }); }
+    catch (error) { toast({ tone: 'danger', title: t('Chưa thể lưu kế hoạch', 'Unable to apply plan'), description: planErrorDescription(error, locale) }); }
     finally { setSaving(false); }
   };
 
   const pendingBlock = pendingBlockId ? blocks.find((item) => item.id === pendingBlockId) : undefined;
-  const pendingIssue = pendingBlock ? (studyBlockAccess(pendingBlock).state === 'ended' ? 'Ca này đã qua giờ kết thúc. Hãy xếp lại phần việc chưa học; không ghi học mới vào lịch sử.'
-    : confirmedBlockIssue(pendingBlock, state.plan?.blocks ?? [], state.tasks, constraints)) : undefined;
+  const pendingAvailableWork = pendingBlock ? availableTaskWorkMinutes(pendingBlock.taskId, pendingBlock.id) : undefined;
+  const pendingAccess = pendingBlock ? studyBlockAccess(pendingBlock) : undefined;
+  const pendingIssue = pendingBlock ? (pendingAccess?.state === 'ended'
+    ? t(
+      'Ca này đã qua giờ kết thúc. Hãy xếp lại phần việc chưa học; không ghi học mới vào lịch sử.',
+      'This session has already ended. Reschedule unfinished work; do not add new study time to history.',
+    )
+    : pendingAccess?.state === 'waiting_prerequisite'
+      ? 'Ca đã được xếp trước cho tương lai và chỉ mở sau khi buổi học liên quan kết thúc.'
+      : confirmedBlockIssue(pendingBlock, state.plan?.blocks ?? [], state.tasks, constraints)) : undefined;
   const pendingEligible = Boolean(pendingBlock && partialPreview?.blockIds.includes(pendingBlock.id)
-    && pendingBlock.status !== 'tentative' && studyBlockAccess(pendingBlock).state === 'available');
+    && pendingBlock.status !== 'tentative' && pendingAccess?.state === 'available');
   const pendingExcluded = partialPreview?.excludedBlocks.find(b => b.blockId === pendingBlock?.id);
+  const resizableAnalysis = calendarView !== 'month' && Boolean(state.planDraft || state.plan);
+  const analysisCollapsed = resizableAnalysis && analysisPaneHeight <= ANALYSIS_PANE_COLLAPSED_HEIGHT;
+
+  const resizeAnalysisWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    const increments: Partial<Record<string, number>> = { ArrowUp: -24, ArrowDown: 24, PageUp: -80, PageDown: 80 };
+    if (event.key === 'Home') {
+      event.preventDefault();
+      setAnalysisPaneHeight(ANALYSIS_PANE_MIN_HEIGHT);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      setAnalysisPaneHeight(analysisPaneMaxHeight());
+    } else if (increments[event.key]) {
+      event.preventDefault();
+      setAnalysisPaneHeight((height) => clampAnalysisPaneHeight(height + increments[event.key]!));
+    }
+  };
 
   return (
-    <div className="student-calendar-page calendar-page flex min-h-0 flex-col overflow-hidden bg-canvas" tabIndex={0} aria-label="Cuộn lịch">
-      <header className="calendar-toolbar z-30 shrink-0 border-b border-line bg-white px-3 py-2 sm:px-5">
+    <div ref={calendarPage} className="student-calendar-page calendar-page flex min-h-0 flex-col overflow-hidden bg-canvas" tabIndex={0} aria-label="Cuộn lịch">
+      <header ref={calendarToolbar} className="calendar-toolbar z-30 shrink-0 border-b border-line bg-white px-3 py-2 sm:px-5">
         <div className="calendar-toolbar-title hidden min-w-0 sm:block">
           <h1 className="text-lg font-bold">Plan</h1>
           <p className="text-[11px] text-muted">{calendarView === 'month' ? new Intl.DateTimeFormat('vi-VN', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${monthStart}T00:00:00Z`)) : `${formatDM(weekStart)}–${formatDM(weekEnd)}`} · GMT+7</p>
@@ -539,7 +670,7 @@ export function PlanPage() {
         </div>
         <div className="calendar-toolbar-dates flex min-w-0 items-center gap-1">
         <IconButton icon="chevronLeft" label="Khoảng trước" className="shrink-0" onClick={() => shiftCalendar(-1)} />
-        <input type="date" value={anchorDate} onChange={(event) => setAnchorDate(event.target.value || today)} className="h-9 rounded-lg border border-line bg-white px-2 text-xs font-semibold" aria-label="Chọn ngày" />
+        <input type="date" lang={locale === 'en' ? 'en-GB' : 'vi-VN'} value={anchorDate} onChange={(event) => setAnchorDate(event.target.value || today)} className="h-9 rounded-lg border border-line bg-white px-2 text-xs font-semibold" aria-label="Chọn ngày" />
         <Button size="sm" variant="ghost" title="Hôm nay" className="min-h-9 px-2" onClick={() => setAnchorDate(today)}>Hôm nay</Button>
         <IconButton icon="chevronRight" label="Khoảng sau" className="shrink-0" onClick={() => shiftCalendar(1)} />
         </div>
@@ -547,21 +678,40 @@ export function PlanPage() {
           <IconButton icon="filter" label="Lọc và hiển thị lịch" onClick={() => setFilterOpen(true)} />
           <ReminderCenter compact />
           {calendarView !== 'month' && <Button size="sm" icon="sparkle" loading={generating || loadingGoals} onClick={() => void analyze()}>{state.planDraft || needsAnalysis ? 'AI phân tích lại' : 'AI lập kế hoạch'}</Button>}
-          {calendarView !== 'month' && draftReady && !partialConfirmable && <Button size="sm" icon="check" loading={saving} disabled={!draftConfirmable} onClick={() => void save()}>{state.planDraft?.durationAdjustments?.length ? 'Áp dụng lịch & thời lượng đề xuất' : 'Áp dụng kế hoạch'}</Button>}
-          {calendarView !== 'month' && partialConfirmable && <Button size="sm" icon="check" onClick={() => reviewPartial()}>Xác nhận phần lịch hợp lệ</Button>}
+          {calendarView !== 'month' && !showingApplied && draftReady && !partialConfirmable && <Button size="sm" icon="check" loading={saving} disabled={!draftConfirmable} onClick={() => void save()}>{state.planDraft?.durationAdjustments?.length ? t('Áp dụng lịch & thời lượng đề xuất', 'Apply proposed schedule & durations') : t('Áp dụng kế hoạch', 'Apply plan')}</Button>}
+          {calendarView !== 'month' && !showingApplied && partialConfirmable && <Button size="sm" icon="check" onClick={() => reviewPartial()}>{t('Xác nhận phần lịch hợp lệ', 'Confirm valid schedule')}</Button>}
         </div>
       </header>
 
-      <div className="calendar-status z-10 shrink-0 border-b border-line bg-white px-4 py-2 sm:px-5">
+      <div
+        className={`calendar-status z-10 shrink-0 bg-white px-4 py-2 sm:px-5 ${resizableAnalysis ? `calendar-analysis-pane ${analysisCollapsed ? 'is-collapsed' : ''}` : 'border-b border-line'}`}
+        style={resizableAnalysis ? { height: analysisPaneHeight, maxHeight: 'none' } : undefined}
+      >
+        {analysisCollapsed ? (
+          <div className="flex h-full min-w-0 items-center gap-2">
+            <Icon name="sparkle" size={16} className="shrink-0 text-primary-ink" />
+            <span className="truncate text-xs font-semibold">Phân tích AI</span>
+            <span className="hidden truncate text-[11px] text-muted sm:inline">
+              {needsAnalysis ? 'Có thay đổi cần kiểm tra lại' : state.planDraft ? 'Bản nháp đang chờ áp dụng' : 'Kế hoạch đang áp dụng'}
+            </span>
+            <button
+              type="button"
+              className="ml-auto shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold text-primary-ink hover:bg-primary-light"
+              onClick={() => setAnalysisPaneHeight(clampAnalysisPaneHeight(ANALYSIS_PANE_DEFAULT_HEIGHT))}
+            >
+              Mở rộng
+            </button>
+          </div>
+        ) : <>
         {state.plan && (state.planDraft || state.calendarDraft) && <div role="group" aria-label="Nguồn lịch" className="mb-2 flex gap-2">
-          <Button size="sm" variant={showingApplied ? 'primary' : 'secondary'} aria-pressed={showingApplied} onClick={() => setCalendarSource('applied')}>Lịch đang dùng</Button>
-          <Button size="sm" variant={!showingApplied ? 'primary' : 'secondary'} aria-pressed={!showingApplied} onClick={() => setCalendarSource('draft')}>Xem bản nháp</Button>
+          <Button size="sm" variant={showingApplied ? 'primary' : 'secondary'} aria-pressed={showingApplied} onClick={() => setCalendarSource('applied')}>{t('Lịch đang dùng', 'Active schedule')}</Button>
+          <Button size="sm" variant={!showingApplied ? 'primary' : 'secondary'} aria-pressed={!showingApplied} onClick={() => setCalendarSource('draft')}>{t('Xem bản nháp', 'View draft')}</Button>
         </div>}
         {showingApplied && state.plan?.confirmation?.mode === 'partial' && <p role="status" className="mb-2 text-warning-ink">{expiredAppliedRisk ? 'Kế hoạch đang dùng có deadline đã qua. Phân tích lại phần việc còn hạn; lịch sử học vẫn giữ nguyên.' : `Đang dùng phần lịch đã xác nhận. Còn thiếu ${formatDuration(state.plan.feasibility?.deficitMin ?? 0)}; chưa bảo đảm hoàn thành toàn bộ công việc đúng hạn.`}</p>}
         {!needsAnalysis && state.planDraft && <PlanDraftNotice draft={state.planDraft} tasks={state.tasks} now={now} />}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
           <span className="inline-flex items-center gap-1.5 font-semibold"><Icon name={draftChecked ? 'checkCircle' : 'edit'} size={15} className={draftChecked ? 'text-success-ink' : qualityWarning ? 'text-warning-ink' : 'text-primary-ink'} />{draftReady ? qualityWarning ? 'Bản nháp có cảnh báo · chưa áp dụng' : 'Bản AI đã kiểm tra · chưa áp dụng' : needsAnalysis ? 'Có thay đổi cần AI kiểm tra' : state.plan ? 'Kế hoạch đang áp dụng' : 'Kéo dữ liệu vào lịch để bắt đầu'}</span>
-          <span className="text-muted">{shownBlocks.length} ca tự học · {formatDuration(totalMinutes)}</span>
+          <span className="text-muted">{t(`${shownBlocks.length} ca tự học`)} · {t(formatDuration(totalMinutes))}</span>
           {draftReady && state.planDraft?.diff && <span className="text-muted" aria-label="Thay đổi so với lịch đã xác nhận">
             Thêm {state.planDraft.diff.added.length} · dời {state.planDraft.diff.moved_block_count ?? state.planDraft.diff.removed.length} · giữ {state.planDraft.diff.unchanged_count} block
             {(state.planDraft.diff.moved_work_minutes ?? 0) > 0 ? ` · ${formatDuration(state.planDraft.diff.moved_work_minutes ?? 0)} bị dời` : ''}
@@ -571,12 +721,40 @@ export function PlanPage() {
           <button type="button" className="ml-auto inline-flex min-h-6 items-center gap-1 text-primary-ink" onClick={() => setLegendOpen(true)}><Icon name="info" size={14} />Chú giải</button>
         </div>
         {needsAnalysis && <p className="mt-1 text-[11px] text-muted" role="status">
-          {persistence?.status === 'saved' ? 'Đã lưu nháp · chưa áp dụng.' : persistence?.status === 'error' || persistence?.status === 'conflict'
-            ? 'Chưa lưu được nháp; đừng reload. Hãy kiểm tra kết nối.' : 'Đang lưu nháp · lịch đã xác nhận vẫn được giữ.'}
+          {persistence?.status === 'saved' ? t('Đã lưu nháp · chưa áp dụng.', 'Draft saved · not applied.') : persistence?.status === 'error' || persistence?.status === 'conflict'
+            ? t('Chưa lưu được nháp; đừng reload. Hãy kiểm tra kết nối.', 'The draft could not be saved; do not reload. Check your connection.')
+            : t('Đang lưu nháp · lịch đã xác nhận vẫn được giữ.', 'Saving draft · the confirmed schedule remains unchanged.')}
           {persistence?.status === 'error' && <button type="button" className="ml-2 font-semibold text-primary-ink underline" onClick={retrySave}>Thử lưu lại</button>}
         </p>}
-        {(courseFilter !== 'all' || !showPersonal) && <p className="mt-1 text-[11px] text-muted">Đang xem: {state.courses.find((course) => course.id === courseFilter)?.code ?? 'tất cả môn'}{!showPersonal ? ' · ẩn lịch cá nhân' : ''}. Bộ lọc không thay đổi kế hoạch.</p>}
+        {(courseFilter !== 'all' || !showPersonal) && <p className="mt-1 text-[11px] text-muted">Đang xem: {state.courses.find((course) => course.id === courseFilter)?.code ?? 'tất cả môn'}{!showPersonal ? ' · ẩn lịch cá nhân' : ''}. Môn đang lọc cũng là phạm vi AI đặt mục tiêu và chia nhiệm vụ.</p>}
+        </>}
       </div>
+
+      {resizableAnalysis && (
+        <div
+          ref={analysisResizer}
+          className={`calendar-analysis-resizer ${resizingAnalysis ? 'is-resizing' : ''}`}
+          role="separator"
+          aria-label="Điều chỉnh chiều cao phần AI giải thích"
+          aria-orientation="horizontal"
+          aria-valuemin={ANALYSIS_PANE_MIN_HEIGHT}
+          aria-valuemax={analysisPaneMaxHeight()}
+          aria-valuenow={Math.round(analysisPaneHeight)}
+          aria-valuetext={`${Math.round(analysisPaneHeight)} pixel. Kéo xuống để xem thêm phân tích AI, kéo lên để xem thêm lịch.`}
+          tabIndex={0}
+          title="Kéo lên hoặc xuống để đổi chiều cao phần phân tích AI"
+          onKeyDown={resizeAnalysisWithKeyboard}
+          onDoubleClick={() => setAnalysisPaneHeight(ANALYSIS_PANE_DEFAULT_HEIGHT)}
+          onPointerDown={(event) => {
+            if (typeof event.button === 'number' && event.button !== 0 && event.pointerType !== 'touch') return;
+            event.preventDefault();
+            analysisResize.current = { pointerId: event.pointerId, startY: event.clientY, startHeight: analysisPaneHeight };
+            setResizingAnalysis(true);
+          }}
+        >
+          <span aria-hidden="true" />
+        </div>
+      )}
 
       <div className="calendar-board-frame min-h-0 flex-1 overflow-hidden p-3 sm:p-4">
         {calendarView === 'month' ? (
@@ -600,10 +778,10 @@ export function PlanPage() {
       </Modal>
       <Modal open={legendOpen} onClose={() => setLegendOpen(false)} title="Chú giải lịch học">
         <ul className="space-y-3 text-sm">
-          <li className="flex gap-3"><Icon name="calendar" className="shrink-0 text-muted" /><span><strong>Lịch LMS:</strong> buổi học, quiz, deadline; chỉ xem, không kéo sửa.</span></li>
-          <li className="flex gap-3"><Icon name="book" className="shrink-0 text-success-ink" /><span><strong>Giờ tự học ưu tiên:</strong> khoảng rảnh cho AI xếp việc, chưa phải nhiệm vụ để bắt đầu Do.</span></li>
-          <li className="flex gap-3"><Icon name="play" className="shrink-0 text-primary-ink" /><span><strong>Ca tự học:</strong> có nhiệm vụ và mục tiêu cụ thể; ca đã xác nhận, không xung đột có thể bắt đầu Do.</span></li>
-          <li className="flex gap-3"><Icon name="edit" className="shrink-0 text-warning-ink" /><span><strong>Bản nháp:</strong> được lưu riêng; phân tích và xác nhận trước khi áp dụng.</span></li>
+          <li className="flex gap-3"><Icon name="calendar" className="shrink-0 text-muted" /><span><strong>{t('Lịch LMS:', 'LMS calendar:')}</strong> {t('buổi học, quiz, deadline; chỉ xem, không kéo sửa.', 'classes, quizzes, and deadlines; read-only and cannot be dragged.')}</span></li>
+          <li className="flex gap-3"><Icon name="book" className="shrink-0 text-success-ink" /><span><strong>{t('Giờ tự học ưu tiên:', 'Preferred study time:')}</strong> {t('khoảng rảnh cho AI xếp việc, chưa phải nhiệm vụ để bắt đầu Do.', 'free time preferred for AI scheduling, not yet a task you can start.')}</span></li>
+          <li className="flex gap-3"><Icon name="play" className="shrink-0 text-primary-ink" /><span><strong>{t('Ca tự học:', 'Study session:')}</strong> {t('có nhiệm vụ và mục tiêu cụ thể; ca đã xác nhận, không xung đột có thể bắt đầu Do.', 'has a specific task and objective; a confirmed, conflict-free session can be started.')}</span></li>
+          <li className="flex gap-3"><Icon name="edit" className="shrink-0 text-warning-ink" /><span><strong>{t('Bản nháp:', 'Draft:')}</strong> {t('được lưu riêng; phân tích và xác nhận trước khi áp dụng.', 'saved separately; review and confirm it before applying.')}</span></li>
         </ul>
       </Modal>
       <StudyBlockDialog
@@ -615,7 +793,8 @@ export function PlanPage() {
         applyLabel={partialConfirmable ? 'Xem và xác nhận phần lịch hợp lệ' : undefined}
         saving={saving || generating}
         minDate={today}
-        maxDate={addDays(calendarWeekStart(today), TASK_SELECTION_HORIZON_DAYS - 1)}
+        maxDate={planningRangeEnd}
+        remainingWorkMin={pendingAvailableWork}
         onClose={() => !saving && setPendingBlockId(null)}
         onSave={updateBlockExactTime}
         onStart={() => pendingBlock && startStudyBlock(pendingBlock.id)}
@@ -630,7 +809,7 @@ export function PlanPage() {
         initialLabel={personalDialog?.label ?? 'Bận khác'}
         initialDate={anchorDate < today ? today : anchorDate}
         minDate={today}
-        maxDate={addDays(calendarWeekStart(today), TASK_SELECTION_HORIZON_DAYS - 1)}
+        maxDate={planningRangeEnd}
         onClose={() => setPersonalDialog(null)}
         onSubmit={(value) => {
           if (addPersonalSlot(value.date, value.start, value.category, value.label, value.end)) setPersonalDialog(null);
@@ -645,7 +824,7 @@ export function PlanPage() {
         initialStart={editingPersonalItem?.start ?? '18:00'}
         initialEnd={editingPersonalItem?.end ?? '19:00'}
         minDate={today}
-        maxDate={addDays(calendarWeekStart(today), TASK_SELECTION_HORIZON_DAYS - 1)}
+        maxDate={planningRangeEnd}
         onClose={() => setEditingPersonalItem(null)}
         onSubmit={(value) => editingPersonalItem?.entityId && updatePersonalSlot(editingPersonalItem.entityId, value)}
       />
@@ -667,8 +846,8 @@ export function PlanPage() {
           <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 id="weekly-goal-title" className="text-lg font-bold">Mục tiêu tuần AI đề xuất</h2>
-                <p className="mt-1 text-sm text-muted">Plan Agent đọc assignment, module, rubric và tài liệu bài tập được gắn nguồn. Sửa hoặc bỏ mục tiêu trước khi chia bước và xếp lịch.</p>
+                <h2 id="weekly-goal-title" className="text-lg font-bold">Bước 1 · Đặt mục tiêu tuần</h2>
+                <p className="mt-1 text-sm text-muted">PaceWise đọc syllabus/module, assignment và đề bài đã được phép truy cập để đề xuất kết quả cần đạt trong tuần. Bạn xác nhận mục tiêu trước khi hệ thống chia nhỏ nhiệm vụ.</p>
               </div>
               <IconButton icon="x" label="Đóng" onClick={() => setGoalDialogOpen(false)} />
             </div>
@@ -679,7 +858,7 @@ export function PlanPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <input value={goal.title} onChange={(event) => setWeeklyGoals((current) => current.map((item) => item.id === goal.id ? { ...item, title: event.target.value } : item))} className="min-h-10 min-w-0 flex-1 rounded-lg border border-line px-3 text-sm" aria-label="Nội dung mục tiêu tuần" />
-                      <span className="rounded-full bg-primary-light px-2 py-1 text-[10px] font-semibold text-primary-ink">{goal.analysisSource === 'model' ? 'AI đề xuất' : 'Fallback an toàn'}</span>
+                      <span className="rounded-full bg-primary-light px-2 py-1 text-[10px] font-semibold text-primary-ink">{goal.analysisSource === 'model' ? 'AI đề xuất' : 'Theo syllabus / assignment'}</span>
                     </div>
                     {!!goal.rationale && <p className="mt-2 text-xs text-muted">{goal.rationale}</p>}
                     <p className="mt-1 text-[11px] text-muted">Bài liên quan: {goal.taskIds.map((id) => state.tasks.find((task) => task.id === id)?.title ?? id).join('; ')}</p>
@@ -696,7 +875,7 @@ export function PlanPage() {
                 setWeeklyGoals(confirmed);
                 setGoalDialogOpen(false);
                 void analyzeWithGoals(confirmed);
-              }}>Xác nhận và lập lịch</Button>
+              }}>Xác nhận mục tiêu & chia nhỏ nhiệm vụ</Button>
             </div>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import type { Course, LMSCourseData, Plan, StudySession, Task } from '../types';
-import { APP_TIMEZONE, addDays, calendarWeekStart, currentAppDateTime, durationMin } from './time';
+import { APP_TIMEZONE, currentAppDateTime, durationMin } from './time';
 
 export type ReflectionActivityKind = 'class' | 'class_session' | 'lecture_video' | 'quiz' | 'exam' | 'self_study' | 'review';
 
@@ -18,6 +18,8 @@ export interface ReflectionActivity {
   plannedMinutes: number;
   actualMinutes?: number;
   completionPercent?: number;
+  remainingMinutes?: number;
+  workResult?: StudySession['workResult'];
   blocker?: string;
   outcome?: string;
   missed?: boolean;
@@ -45,9 +47,9 @@ export function reflectionActivityWindow({
   weeklyEnd: string;
   today?: string;
 }) {
-  if (!requestedActivity) return { from: weeklyStart, to: weeklyEnd };
-  const from = calendarWeekStart(today ?? currentAppDateTime().date);
-  return { from, to: addDays(from, 6) };
+  void requestedActivity;
+  void today;
+  return { from: weeklyStart, to: weeklyEnd };
 }
 
 export function reflectionNeedsPlanReview(
@@ -149,6 +151,8 @@ export function buildReflectionActivities({
       plannedMinutes: Math.max(0, durationMin(block.start, block.end)),
       actualMinutes: session?.minutes,
       completionPercent: session?.completionPercent,
+      remainingMinutes: session?.remainingMinutes,
+      workResult: session?.workResult,
       blocker: session?.blocker,
       outcome: session?.outcome,
       missed: !session,
@@ -174,6 +178,8 @@ export function buildReflectionActivities({
       plannedMinutes: session.plannedMin ?? task.estimateMin,
       actualMinutes: session.minutes,
       completionPercent: session.completionPercent,
+      remainingMinutes: session.remainingMinutes,
+      workResult: session.workResult,
       blocker: session.blocker,
       outcome: session.outcome,
     });

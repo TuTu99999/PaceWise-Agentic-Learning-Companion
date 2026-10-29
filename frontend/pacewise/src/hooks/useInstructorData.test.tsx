@@ -26,7 +26,10 @@ describe('instructor data scope and revalidation', () => {
     sessionStorage.clear(); vi.mocked(fetchInstructorData).mockReset(); mocks.dispatch.mockClear();
     mocks.state = { user: { id: 't', courseId: 'a' }, lmsRevision: 0, classGroups: [] };
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it('revalidates an expired freshness window even if the revision did not change after course switch', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
@@ -52,6 +55,15 @@ describe('instructor data scope and revalidation', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(fetchInstructorData).not.toHaveBeenCalled();
     expect(result.current.error).toBeNull();
+  });
+
+  it('does not load the heavy aggregate on pages that do not consume it', async () => {
+    const disabledWrapper = ({ children }: { children: ReactNode }) => (
+      <InstructorDataProvider enabled={false}>{children}</InstructorDataProvider>
+    );
+    const { result } = renderHook(useInstructorData, { wrapper: disabledWrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(fetchInstructorData).not.toHaveBeenCalled();
   });
 
   it('discards an old course response after switching, including a manual refresh', async () => {
@@ -88,6 +100,24 @@ describe('instructor data scope and revalidation', () => {
     vi.mocked(fetchInstructorData).mockResolvedValueOnce(data('fresh'));
     mocks.state.lmsRevision++; rerender();
     await waitFor(() => expect(fetchInstructorData).toHaveBeenCalledOnce());
+  });
+
+  it('does not reload instructor data on a timer, tab visibility, or reconnect', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-18T10:00:00+07:00'));
+    writeInstructorOverviewCache('t', 'a', data('cached'));
+    show();
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchInstructorData).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('online'));
+      await Promise.resolve();
+    });
+
+    expect(fetchInstructorData).not.toHaveBeenCalled();
   });
 
   it('clears cached aggregate and review data if live instructor access is revoked', async () => {

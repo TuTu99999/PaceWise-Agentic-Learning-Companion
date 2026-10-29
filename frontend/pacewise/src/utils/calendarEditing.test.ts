@@ -25,16 +25,15 @@ describe('minute-accurate calendar validation', () => {
 });
 
 describe('personal activity time validation', () => {
-  const now = Date.parse('2026-10-05T08:00:00+07:00');
-
-  it('rejects a past day and an elapsed time today', () => {
-    expect(personalSlotTimeError(slot({ date: '2026-10-04', start: '20:00', end: '21:00' }), now)).toMatch(/thời gian đã qua/);
-    expect(personalSlotTimeError(slot({ date: '2026-10-05', start: '07:00', end: '08:30' }), now)).toMatch(/thời gian đã qua/);
+  it('allows adding and moving activities anywhere in past or future calendar history', () => {
+    expect(personalSlotTimeError(slot({ date: '2026-10-04', start: '20:00', end: '21:00' }))).toBeUndefined();
+    expect(personalSlotTimeError(slot({ date: '2026-10-05', start: '07:00', end: '08:30' }))).toBeUndefined();
+    expect(personalSlotTimeError(slot({ date: '2036-10-05', start: '07:00', end: '08:30' }))).toBeUndefined();
   });
 
-  it('allows the present boundary and future activities', () => {
-    expect(personalSlotTimeError(slot({ date: '2026-10-05', start: '08:00', end: '09:00' }), now)).toBeUndefined();
-    expect(personalSlotTimeError(slot({ date: '2026-10-06', start: '07:00', end: '08:00' }), now)).toBeUndefined();
+  it('still rejects malformed or reversed activity ranges', () => {
+    expect(personalSlotTimeError(slot({ date: 'invalid' }))).toMatch(/không hợp lệ/);
+    expect(personalSlotTimeError(slot({ start: '09:00', end: '08:00' }))).toMatch(/kết thúc sau/);
   });
 });
 

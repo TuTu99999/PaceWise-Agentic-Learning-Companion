@@ -2,15 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 import { uploadTeacherDocument, type CourseDocumentRole } from '../../services/api';
 import { coursePdfMaxMb } from '../../services/courseSource';
 import { Button } from '../ui/Button';
-import { Select } from '../ui/Field';
+import { Input, Select } from '../ui/Field';
+import { useLocale } from '../../i18n/LocaleContext';
 
 interface UploadRow {
   id: string; file: File; chapter: string; contentRole: CourseDocumentRole;
   status: 'waiting' | 'uploading' | 'saved' | 'failed'; error?: string;
 }
 
+const AUTO_DETECT_CHAPTER = 'Bài tập theo chương';
+const CUSTOM_CHAPTER = '__custom_chapter__';
+
 export function PdfUpload({ courseId, chapters, onUploaded }: { courseId: string; chapters: string[]; onUploaded: () => Promise<void> }) {
+  const { locale, t } = useLocale();
   const [chapter, setChapter] = useState('');
+  const [chapterChoice, setChapterChoice] = useState('');
   const [contentRole, setContentRole] = useState<CourseDocumentRole>('learning_material');
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -18,7 +24,7 @@ export function PdfUpload({ courseId, chapters, onUploaded }: { courseId: string
   const [error, setError] = useState('');
   const generation = useRef(0);
   useEffect(() => {
-    generation.current++; setRows([]); setBusy(false); setChapter(''); setContentRole('learning_material'); setMessage(''); setError('');
+    generation.current++; setRows([]); setBusy(false); setChapter(''); setChapterChoice(''); setContentRole('learning_material'); setMessage(''); setError('');
     return () => { generation.current++; };
   }, [courseId]);
 
@@ -51,21 +57,59 @@ export function PdfUpload({ courseId, chapters, onUploaded }: { courseId: string
     if (generation.current === active) setBusy(false);
   };
 
+  const roleOptions = [
+    { value: 'learning_material', label: t('Slide / học liệu', 'Slides / materials') },
+    { value: 'student_assignment_brief', label: t('Đề bài cho sinh viên', 'Student assignment brief') },
+    { value: 'student_rubric', label: t('Rubric công khai', 'Public rubric') },
+    { value: 'mixed_assignment_package', label: t('Word có đề + rubric + đáp án', 'Word file with brief, rubric, and answers') },
+    { value: 'teacher_solution', label: t('Đáp án chỉ giảng viên', 'Instructor-only answers') },
+  ];
+  const isExerciseRole = (role: CourseDocumentRole) => role !== 'learning_material';
+  const chapterOptions = (role: CourseDocumentRole, includePlaceholder = false) => [
+    ...(includePlaceholder ? [{ value: '', label: t('Chọn cách gắn chương', 'Choose how to assign a chapter') }] : []),
+    ...(isExerciseRole(role) ? [{ value: AUTO_DETECT_CHAPTER, label: t('Tự nhận diện nhiều chương trong Word', 'Detect multiple chapters from Word') }] : []),
+    ...chapters.filter((item) => item !== AUTO_DETECT_CHAPTER).map((item) => ({ value: item, label: item })),
+    { value: CUSTOM_CHAPTER, label: t('Nhập tên chương khác…', 'Enter another chapter…') },
+  ];
+  const chapterHint = isExerciseRole(contentRole)
+    ? t('Nếu Word có nhiều phần, chọn tự nhận diện để PaceWise khớp từng heading Buổi/Chương với nhiệm vụ. File một chương thì chọn hoặc nhập đúng tên chương.', 'For a Word file with multiple sections, use auto-detection so PaceWise can match each Session/Chapter heading to its task. For a single chapter, choose or enter its exact name.')
+    : t('Chọn chương bài giảng từ danh sách hoặc nhập tên chương mới. Ví dụ: “Chương 4: Ngôn ngữ SQL”.', 'Choose the lecture chapter or enter a new chapter name. Example: “Chapter 4: SQL”.');
+
   return <div className="space-y-3">
-    <Select label="Loại nội dung" required disabled={busy} value={contentRole} onChange={(event) => setContentRole(event.target.value as CourseDocumentRole)}
+    <Select label={t('Loại nội dung', 'Content type')} required disabled={busy} value={contentRole} onChange={(event) => {
+      const next = event.target.value as CourseDocumentRole;
+      const nextChapter = next === 'learning_material' && chapter === AUTO_DETECT_CHAPTER ? '' : chapter;
+      setContentRole(next);
+      if (next === 'learning_material' && chapter === AUTO_DETECT_CHAPTER) {
+        setChapter('');
+        setChapterChoice('');
+      }
+      setRows((current) => current.map((row) => ({ ...row, contentRole: next, chapter: nextChapter })));
+    }}
       options={[
-        { value: 'learning_material', label: 'Slide / học liệu' },
-        { value: 'student_assignment_brief', label: 'Đề bài cho sinh viên' },
-        { value: 'student_rubric', label: 'Rubric công khai' },
-        { value: 'mixed_assignment_package', label: 'Word có đề + rubric + đáp án' },
-        { value: 'teacher_solution', label: 'Đáp án chỉ giảng viên' },
+        ...roleOptions,
       ]} />
-    <Select label="Chương / module của tài liệu" required disabled={busy || !chapters.length} value={chapter} onChange={(event) => setChapter(event.target.value)}
-      hint={chapters.length ? 'Word nhiều chương có thể chọn “Bài tập theo chương”; hệ thống tiếp tục khớp theo heading bên trong.' : 'Chưa có chủ đề buổi học. Hãy thêm hoặc nhập lịch học trước khi tải tài liệu.'}
-      options={[{ value: '', label: chapters.length ? 'Chọn chương / chủ đề' : 'Chưa có chủ đề từ lịch học' }, { value: 'Bài tập theo chương', label: 'Bài tập theo chương (Word nhiều chương)' }, ...chapters.map((item) => ({ value: item, label: item }))]} />
+    <Select label={t('Chương / module của tài liệu', 'Document chapter / module')} required disabled={busy}
+      value={chapterChoice} options={chapterOptions(contentRole, true)} hint={chapterHint}
+      onChange={(event) => {
+        const next = event.target.value;
+        const nextChapter = next === CUSTOM_CHAPTER ? '' : next;
+        setChapterChoice(next);
+        setChapter(nextChapter);
+        setRows((current) => current.map((row) => ({ ...row, chapter: nextChapter })));
+      }} />
+    {chapterChoice === CUSTOM_CHAPTER && <Input
+      label={t('Tên chương / module mới', 'New chapter / module name')}
+      required disabled={busy} autoFocus maxLength={255} value={chapter}
+      placeholder={t('Ví dụ: Chương 4: Ngôn ngữ SQL', 'Example: Chapter 4: SQL')}
+      onChange={(event) => {
+        setChapter(event.target.value);
+        setRows((current) => current.map((row) => ({ ...row, chapter: event.target.value })));
+      }}
+    />}
     <label className={`inline-flex min-h-11 items-center rounded-xl border border-line bg-white px-4 text-sm font-semibold ${chapter && !busy ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
-      {`Thêm PDF hoặc Word (≤ ${coursePdfMaxMb} MB/file)`}
-      <input aria-label="Tải tài liệu môn học" type="file" multiple accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" disabled={busy || !chapter} className="sr-only" onChange={(event) => {
+      {locale === 'en' ? `Add PDF or Word (≤ ${coursePdfMaxMb} MB/file)` : `Thêm PDF hoặc Word (≤ ${coursePdfMaxMb} MB/file)`}
+      <input aria-label={t('Tải tài liệu môn học', 'Upload course materials')} type="file" multiple accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" disabled={busy || !chapter} className="sr-only" onChange={(event) => {
         const files = Array.from(event.target.files ?? []); event.target.value = '';
         if (!files.length) return;
         if (files.length + rows.filter((row) => row.status !== 'saved').length > 20) { setError('Mỗi hàng chờ tối đa 20 tài liệu.'); return; }
@@ -76,20 +120,10 @@ export function PdfUpload({ courseId, chapters, onUploaded }: { courseId: string
         setRows((current) => [...current.filter((row) => row.status !== 'saved'), ...files.map((file): UploadRow => ({ id: crypto.randomUUID(), file, chapter, contentRole, status: 'waiting' }))]);
       }} />
     </label>
-    <p className="text-sm text-muted">Với Word chứa cả đáp án, chọn đúng loại hỗn hợp. PaceWise lưu bản gốc cho giảng viên và chỉ đưa bản đã loại đáp án cho Plan, Do và chatbot.</p>
-    <ul className="space-y-3" aria-label="Hàng chờ tải tài liệu">{rows.filter((row) => row.status !== 'saved').map((row) =>
+    <p className="text-sm text-muted">{t('Với Word chứa cả đáp án, chọn đúng loại hỗn hợp. PaceWise lưu bản gốc cho giảng viên và chỉ đưa bản đã loại đáp án cho Plan, Do và chatbot.', 'For a Word file that includes answers, choose the mixed package type. PaceWise keeps the original for instructors and gives Plan, Do, and the chatbot only the answer-free version.')}</p>
+    <ul className="space-y-3" aria-label={t('Hàng chờ tải tài liệu', 'Material upload queue')}>{rows.filter((row) => row.status !== 'saved').map((row) =>
       <li key={row.id} className="space-y-2 rounded-xl border border-line p-3">
         <p className="break-words font-medium">{row.file.name}</p>
-        <Select label={`Chương của ${row.file.name}`} required value={row.chapter} disabled={busy}
-          options={[{ value: '', label: 'Chọn chương / chủ đề' }, { value: 'Bài tập theo chương', label: 'Bài tập theo chương (Word nhiều chương)' }, ...chapters.map((item) => ({ value: item, label: item }))]}
-          onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, chapter: event.target.value } : item))} />
-        <Select label={`Loại nội dung của ${row.file.name}`} required value={row.contentRole} disabled={busy}
-          options={[
-            { value: 'learning_material', label: 'Slide / học liệu' }, { value: 'student_assignment_brief', label: 'Đề bài cho sinh viên' },
-            { value: 'student_rubric', label: 'Rubric công khai' }, { value: 'mixed_assignment_package', label: 'Word có đề + rubric + đáp án' },
-            { value: 'teacher_solution', label: 'Đáp án chỉ giảng viên' },
-          ]}
-          onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, contentRole: event.target.value as CourseDocumentRole } : item))} />
         <p role={row.status === 'failed' ? 'alert' : 'status'} className="text-sm text-muted">{row.status === 'uploading' ? 'Đang tải…' : row.status === 'failed' ? row.error : 'Chờ tải'}</p>
         <div className="flex gap-2">
           {row.status === 'failed' && <Button variant="secondary" disabled={busy} onClick={() => void upload([row])}>Thử tải lại</Button>}

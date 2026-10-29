@@ -4,17 +4,15 @@ import { weekdayOf } from './time';
 export const blockTimestamp = (date: string, clock: string) => Date.parse(`${date}T${clock}:00+07:00`);
 const timestamp = (value: string) => Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}+07:00`);
 
-/** Personal planning is prospective; elapsed calendar time is read-only history. */
+/** Personal calendar entries are editable history as well as future constraints. */
 export function personalSlotTimeError(
   slot: Pick<UnavailableSlot, 'date' | 'start' | 'end'>,
-  now = Date.now(),
 ): string | undefined {
   if (!slot.date) return 'Ngày của hoạt động không hợp lệ.';
   const start = blockTimestamp(slot.date, slot.start);
   const end = blockTimestamp(slot.date, slot.end);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return 'Ngày hoặc giờ của hoạt động không hợp lệ.';
   if (end <= start) return 'Hoạt động phải kết thúc sau giờ bắt đầu.';
-  if (start < now) return 'Không thể thêm hoặc dời hoạt động vào thời gian đã qua. Lịch quá khứ chỉ để xem.';
 }
 
 /** Exact Canvas due time wins over the date-only, end-of-day fallback. */

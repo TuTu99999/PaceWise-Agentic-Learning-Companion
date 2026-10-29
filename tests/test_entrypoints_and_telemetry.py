@@ -114,7 +114,12 @@ def test_llm_factories_apply_runtime_configuration(monkeypatch):
 
     assert agent_llm.get_agent_llm(task="qa", complexity="complex").model["model"] == "cx/gpt-5.6-luna"
     assert agent_llm.get_agent_llm(task="assessment").model["model"] == "cx/gpt-5.6-luna"
-    assert agent_llm.get_agent_llm(task="reflect").model["model"] == "cx/gpt-5.6-sol"
+    assert agent_llm.get_agent_llm(task="reflect").model["model"] == "cx/gpt-5.6-luna"
+
+    settings.openai_base_url = "http://host.docker.internal:20128/v1"
+    monkeypatch.setattr(agent_llm.os.path, "exists", lambda _path: False)
+    assert agent_llm.get_agent_llm()["base_url"] == "http://127.0.0.1:20128/v1"
+    settings.openai_base_url = "https://llm.example/v1"
 
     monkeypatch.setattr(service_llm, "get_settings", lambda: settings)
     monkeypatch.setattr(service_llm, "ChatOpenAI", fake_chat_openai)
@@ -244,6 +249,7 @@ def test_notification_worker_is_an_independent_entrypoint(monkeypatch):
     monkeypatch.setattr(notification_worker, "initialize_database", lambda: calls.append("database"))
     monkeypatch.setattr(notification_worker, "recover_notification_leases", lambda received: calls.append(("recover", received)))
     monkeypatch.setattr(notification_worker, "deliver_due_reminders", lambda received: calls.append(("deliver", received)))
+    monkeypatch.setattr(notification_worker, "purge_expired_transcripts", lambda received: calls.append(("purge-do-chat", received)))
     monkeypatch.setattr(
         notification_worker,
         "record_worker_heartbeat",
@@ -260,6 +266,7 @@ def test_notification_worker_is_an_independent_entrypoint(monkeypatch):
 
     assert calls == [
         "database",
+        ("purge-do-chat", settings),
         ("recover", settings),
         ("deliver", settings),
         ("heartbeat", settings, "notification"),

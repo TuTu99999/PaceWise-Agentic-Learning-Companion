@@ -6,9 +6,9 @@ import { Modal } from '../../components/ui/Modal';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { useAppStore } from '../../store/AppStore';
 import { buildTeachingCalendar } from '../../utils/teachingCalendar';
-import { TeacherLessonManager } from '../../components/domain/TeacherLessonManager';
 import { Icon } from '../../components/ui/Icon';
-import { addDays, calendarWeekStart, DEMO_TODAY, diffDays, formatDay, formatDM } from '../../utils/time';
+import { addDays, calendarWeekStart, currentAppDateTime, diffDays, formatDay, formatDM } from '../../utils/time';
+import { useLocale } from '../../i18n/LocaleContext';
 
 type CalendarView = 'week' | 'month' | 'next7';
 const monthStartOf = (date: string) => `${date.slice(0, 7)}-01`;
@@ -20,8 +20,9 @@ const addMonths = (date: string, offset: number) => {
 export function InstructorSchedulePage() {
   useDocumentTitle('Lịch dạy');
   const { state } = useAppStore();
+  const { locale } = useLocale();
   const [view, setView] = useState<CalendarView>('week');
-  const [anchor, setAnchor] = useState(DEMO_TODAY);
+  const [anchor, setAnchor] = useState(() => currentAppDateTime().date);
   const [courseId, setCourseId] = useState('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const monthStart = monthStartOf(anchor);
@@ -50,8 +51,8 @@ export function InstructorSchedulePage() {
         </div>
         <div className="calendar-toolbar-dates flex min-w-0 items-center gap-1">
         <IconButton icon="chevronLeft" label="Khoảng trước" className="shrink-0" onClick={() => shift(-1)} />
-        <input type="date" value={anchor} onChange={(event) => { setAnchor(event.target.value || DEMO_TODAY); setSelectedId(null); }} className="h-9 max-w-full rounded-lg border border-line bg-white px-2 text-xs font-semibold" aria-label="Chọn ngày" />
-        <Button size="sm" variant="ghost" title="Hôm nay" onClick={() => { setAnchor(DEMO_TODAY); setSelectedId(null); }}><span className="sr-only sm:not-sr-only">Hôm nay</span><Icon name="clock" size={18} className="sm:hidden" /></Button>
+        <input type="date" value={anchor} onChange={(event) => { setAnchor(event.target.value || currentAppDateTime().date); setSelectedId(null); }} className="h-9 max-w-full rounded-lg border border-line bg-white px-2 text-xs font-semibold" aria-label="Chọn ngày" />
+        <Button size="sm" variant="ghost" title="Hôm nay" onClick={() => { setAnchor(currentAppDateTime().date); setSelectedId(null); }}><span className="sr-only sm:not-sr-only">Hôm nay</span><Icon name="clock" size={18} className="sm:hidden" /></Button>
         <IconButton icon="chevronRight" label="Khoảng sau" className="shrink-0" onClick={() => shift(1)} />
         </div>
         <div className="calendar-toolbar-actions flex min-w-0 flex-wrap items-center gap-2">
@@ -62,12 +63,13 @@ export function InstructorSchedulePage() {
             {state.courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
           </select>
         </label>
-        <TeacherLessonManager preferredCourseId={courseId === 'all' ? state.user?.courseId : courseId} />
         <ButtonLink to="/instructor/courses" size="sm" variant="secondary">Môn học / nhập Excel</ButtonLink>
         </div>
       </header>
       <div className="calendar-status shrink-0 border-b border-line bg-white px-4 py-2 text-xs text-muted sm:px-5" aria-live="polite">
-        Chỉ xem · {new Set(items.map((item) => item.details.id)).size} sự kiện · Không chỉnh sửa hoặc kéo thả lịch
+        {locale === 'en'
+          ? `Read only · ${new Set(items.map((item) => item.details.id)).size} events · Calendar editing and dragging are disabled`
+          : `Chỉ xem · ${new Set(items.map((item) => item.details.id)).size} sự kiện · Không chỉnh sửa hoặc kéo thả lịch`}
         {state.settings.staleData && <p role="alert" className="mt-1 text-warning-ink">Đồng bộ chưa thành công. Lịch đang hiển thị dữ liệu đã tải gần nhất.</p>}
         {!state.workspaceReady && <p role="status" className="mt-1">Đang tải lịch dạy…</p>}
         {state.workspaceReady && !items.length && <p className="mt-1">Chưa có lịch cho môn học và khoảng thời gian đang chọn.</p>}

@@ -122,15 +122,34 @@ def _prepare(state: LearningGraphState, event: dict[str, Any]) -> dict[str, Any]
 def evaluate_completion(event: dict[str, Any]) -> dict[str, Any]:
     planned = max(1, int(event.get("planned_minutes") or 1))
     actual = max(0, int(event.get("actual_minutes") or 0))
-    completion = min(100, max(0, int(event.get("completion_percent") or 0)))
+    work_result = str(event.get("work_result") or "")
+    if work_result not in {"planned_part_done", "needs_more_time", "blocked"}:
+        work_result = ""
+    requested_remaining = max(0, min(1440, int(event.get("remaining_minutes") or 0)))
+    if work_result == "planned_part_done":
+        completion, remaining = 100, 0
+    elif work_result in {"needs_more_time", "blocked"}:
+        remaining = requested_remaining
+        # Kept only for old reports. The learner never has to estimate a
+        # percentage; the server derives a bounded compatibility value from
+        # the concrete follow-up time they requested.
+        completion = max(0, min(99, round(100 * (planned - remaining) / planned)))
+    else:
+        completion = min(100, max(0, int(event.get("completion_percent") or 0)))
+        remaining = max(0, round(planned * (100 - completion) / 100))
     blocker = str(event.get("blocker") or "none")
     if blocker not in _BLOCKERS:
         blocker = "other"
 
-    remaining = max(0, round(planned * (100 - completion) / 100))
     variance = actual - planned
     if actual == 0:
         outcome = "missed"
+    elif work_result == "blocked":
+        outcome = "blocked"
+    elif work_result == "needs_more_time":
+        outcome = "needs_more_time"
+    elif work_result == "planned_part_done":
+        outcome = "completed"
     elif blocker == "knowledge":
         outcome = "blocked"
     elif completion >= 100:
@@ -140,7 +159,9 @@ def evaluate_completion(event: dict[str, Any]) -> dict[str, Any]:
     else:
         outcome = "on_track"
 
-    needs_recovery = outcome in {"missed", "blocked", "needs_more_time"} and remaining >= 30
+    needs_recovery = outcome in {"blocked", "needs_more_time"} and remaining > 0
+    if outcome == "missed":
+        needs_recovery = planned >= 30
     needs_understanding = blocker == "knowledge"
     if needs_understanding:
         next_action = "Gợi ý kiểm tra nhanh hoặc hỏi đáp có nguồn trước khi xếp thêm thời gian."
@@ -160,7 +181,10 @@ def evaluate_completion(event: dict[str, Any]) -> dict[str, Any]:
         "actual_minutes": actual,
         "variance_minutes": variance,
         "completion_percent": completion,
+        "completion_percent_source": "derived_from_remaining_minutes" if work_result else "legacy_user_report",
         "remaining_minutes": remaining,
+        "work_result": work_result or None,
+        "understanding_self_report": str(event.get("understanding_self_report") or "not_reported"),
         "blocker": blocker,
         "blocker_note": str(event.get("blocker_note") or "")[:500],
         "needs_recovery": needs_recovery,

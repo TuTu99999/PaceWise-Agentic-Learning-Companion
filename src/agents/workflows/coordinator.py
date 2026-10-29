@@ -28,7 +28,14 @@ def coordinator_node(state: LearningGraphState) -> dict:
     workflow_hint = str((state.get("request") or {}).get("workflow_hint") or "").lower()
     if workflow_hint in {"plan", "do", "tracking", "qa", "understanding", "recover", "reflect"}:
         workflow, route_confidence = workflow_hint, 1.0
-    security_flags = evaluate_input_policy(query)
+    # Explicit non-answering workflows still run deterministic injection rules
+    # and semantic review for suspicious signals, but do not spend a model call
+    # classifying ordinary plan/tracking text on every request.
+    operational_hint = workflow_hint in {"plan", "do", "tracking", "recover", "reflect"}
+    security_flags = evaluate_input_policy(
+        query,
+        semantic_mode="signals" if operational_hint else None,
+    )
     rule_decision = evaluate_guardrails(query)
     if (
         workflow in {"plan", "do", "tracking", "recover", "reflect"}

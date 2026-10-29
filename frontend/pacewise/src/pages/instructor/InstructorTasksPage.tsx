@@ -32,7 +32,7 @@ export function InstructorTasksPage({ courseId: selectedCourseId, embedded = fal
       <p className="text-sm text-muted">Nhóm: {data?.weights.groups.find((group) => group.id === item.group_id)?.name ?? 'Chưa phân nhóm'} · {item.resource_ids.length} tài liệu{item.has_submissions ? ' · Đã có bài nộp' : ''}</p></div>
       {!item.archived && <div className="flex gap-2"><Button variant="secondary" onClick={() => setEditing(item)}>Sửa</Button><Button variant="ghost" onClick={() => { setArchive(item); setActionError(''); }}>Ẩn nhiệm vụ</Button></div>}
     </div></Card>)}</div>
-    {data && editing && <TaskForm key={editing === 'new' ? 'new' : editing.id} data={data} item={editing === 'new' ? undefined : editing} mutate={mutate} onClose={() => setEditing(null)} />}
+    {data && editing && courseId && <TaskForm key={editing === 'new' ? 'new' : editing.id} courseId={courseId} data={data} item={editing === 'new' ? undefined : editing} mutate={mutate} onClose={() => setEditing(null)} />}
     {data && weights && <WeightsForm data={data} mutate={mutate} onClose={() => setWeights(false)} />}
     <Modal open={!!archive} onClose={() => !busy && setArchive(null)} title="Ẩn nhiệm vụ khỏi sinh viên" description="Giữ nguyên bài nộp, điểm và audit. Plan cần rà lại các block tương lai liên quan; không xóa evidence đã học.">
       <p className="mb-4 font-semibold">{archive?.title}</p>{actionError && <p role="alert" className="mb-3 text-danger-ink">{actionError}</p>}

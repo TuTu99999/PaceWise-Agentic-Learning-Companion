@@ -8,6 +8,22 @@ from src.agents.validators import validate_citations
 
 SOURCE_MARKER = re.compile(r"\[S(\d+)\]", re.I)
 
+# Short acronym-definition questions are weak embedding queries even when the
+# course material contains the exact long form. These additions are retrieval
+# hints only: the answer still has to be supported by an authorized passage.
+_ACRONYM_RETRIEVAL_HINTS = {
+    "sql": "Structured Query Language ngôn ngữ truy vấn có cấu trúc",
+}
+_DEFINITION_CUES = (
+    "viết tắt",
+    "viet tat",
+    "là gì",
+    "la gi",
+    "nghĩa là gì",
+    "nghia la gi",
+    "stand for",
+)
+
 
 def answer_shape_instruction(query: str) -> str:
     """Constrain common question forms so answers do not widen their scope."""
@@ -22,11 +38,22 @@ def answer_shape_instruction(query: str) -> str:
 
 
 def retrieval_query(query: str, history: list[dict] | None = None) -> str:
+    expanded_query = query
     if len(query) < 220 and re.search(r"\b(nó|đó|này|vậy|tiếp|it|that|this)\b", query, re.I):
         previous = next((turn["content"] for turn in reversed(history or []) if turn.get("role") == "user"), "")
         if previous:
-            return f"{previous[:500]}\n{query}"
-    return query
+            expanded_query = f"{previous[:500]}\n{query}"
+
+    normalized = " ".join(query.casefold().split())
+    if any(cue in normalized for cue in _DEFINITION_CUES):
+        hints = [
+            f"{acronym.upper()} {long_form}"
+            for acronym, long_form in _ACRONYM_RETRIEVAL_HINTS.items()
+            if re.search(rf"\b{re.escape(acronym)}\b", normalized)
+        ]
+        if hints:
+            expanded_query = f"{expanded_query}\nThuật ngữ liên quan: {'; '.join(hints)}"
+    return expanded_query
 
 
 def message_text(content: Any) -> str:
@@ -106,6 +133,7 @@ def extractive_fallback(
     query: str = "",
     max_chars: int = 650,
     max_passages: int = 3,
+    locale: str = "vi",
 ) -> str:
     """Return the most query-relevant source sentences, not raw chunk prefixes."""
     query_terms = {
@@ -125,7 +153,10 @@ def extractive_fallback(
         )
         selected = " ".join(sentence for _, sentence in ranked[:2]).strip() or content
         excerpts.append(f"- {selected[:max_chars]} {item['citation']}")
-    return (
-        "Mình chưa thể xác nhận câu trả lời sinh tự động. Các đoạn học liệu liên quan để đối chiếu:\n\n"
-        + "\n\n".join(excerpts)
+    lead = (
+        "I could not verify the generated answer. Here are the relevant source excerpts "
+        "in their original language for you to review:\n\n"
+        if locale == "en"
+        else "Mình chưa thể xác nhận câu trả lời sinh tự động. Các đoạn học liệu liên quan để đối chiếu:\n\n"
     )
+    return lead + "\n\n".join(excerpts)

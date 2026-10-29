@@ -1,18 +1,22 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LearnPage } from './LearnPage';
-import { ApiError, askQuestion } from '../../services/api';
+import { englishSuggestionTaskTitle, LearnPage } from './LearnPage';
+import { ApiError, askHint, askQuestion } from '../../services/api';
+import { LocaleProvider } from '../../i18n/LocaleContext';
+import { PACEWISE_LANGUAGE_STORAGE_KEY } from '../../utils/uiPreferences';
 
-const mocks = vi.hoisted(() => ({ state: {} as Record<string, any>, dispatch: vi.fn(), toast: vi.fn() }));
+const mocks = vi.hoisted(() => ({ state: {} as Record<string, any>, activeTasks: [] as Array<{ title: string }>, dispatch: vi.fn(), toast: vi.fn() }));
 vi.mock('../../store/AppStore', () => ({ useAppStore: () => mocks }));
-vi.mock('../../hooks/useDerived', () => ({ useDerived: () => ({ activeCourse: { code: 'DS201', name: 'Toán rời rạc' }, activeTasks: [] }) }));
+vi.mock('../../hooks/useDerived', () => ({ useDerived: () => ({ activeCourse: { code: 'DS201', name: 'Toán rời rạc' }, activeTasks: mocks.activeTasks }) }));
 vi.mock('../../hooks/useElementWidth', () => ({ useElementWidth: () => ({ ref: { current: null }, width: 1280 }) }));
 vi.mock('../../components/ui/Toast', () => ({ useToast: () => mocks.toast }));
 vi.mock('../../services/api', async (original) => ({ ...await original<typeof import('../../services/api')>(), askQuestion: vi.fn(), askHint: vi.fn(), assessUnderstanding: vi.fn() }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.removeItem(PACEWISE_LANGUAGE_STORAGE_KEY);
+  mocks.activeTasks = [];
   HTMLElement.prototype.scrollIntoView = vi.fn();
   mocks.state = {
     user: { id: 'u', courseId: 'c1' },
@@ -25,12 +29,48 @@ beforeEach(() => {
 });
 
 const setup = () => render(<MemoryRouter><LearnPage /></MemoryRouter>);
+const setupEnglish = () => {
+  localStorage.setItem(PACEWISE_LANGUAGE_STORAGE_KEY, 'en');
+  return render(<LocaleProvider><MemoryRouter><LearnPage /></MemoryRouter></LocaleProvider>);
+};
 const send = (text = 'Tính phản xạ là gì?') => {
   fireEvent.change(screen.getByPlaceholderText('Hỏi về khái niệm, bài tập hoặc tra cứu học liệu...'), { target: { value: text } });
   fireEvent.click(screen.getByTitle('Gửi câu hỏi'));
 };
 
 describe('student chatbot request lifecycle', () => {
+  it('translates demo-course suggestion titles instead of leaking Vietnamese into English UI', () => {
+    expect(englishSuggestionTaskTitle('Bài tập Chương 2: Mô hình cơ sở dữ liệu')).toBe('Chapter 2 assignment: Database models');
+    expect(englishSuggestionTaskTitle('Bài tập Chương 2: Kỹ thuật tìm kiếm')).toBe('Chapter 2 assignment: Searching techniques');
+    expect(englishSuggestionTaskTitle('Bài tập Chương 2: Mở rộng C++ phần 1')).toBe('Chapter 2 assignment: Extended C++ — Part 1');
+    expect(englishSuggestionTaskTitle('Bài tập Chương 1: Công nghệ Web')).toBe('Chapter 1 assignment: Web technologies');
+    expect(englishSuggestionTaskTitle('Quiz tháng 01 · 20 phút')).toBe('Monthly quiz 01 · 20 minutes');
+    expect(englishSuggestionTaskTitle('Hoàn thành BTVN 2026 T10.2: Hàm')).toBe('Complete homework 2026 T10.2: Functions');
+    expect(englishSuggestionTaskTitle('Hoàn thành Bài tập Chương 2: Mô hình cơ sở dữ liệu')).toBe('Complete Chapter 2 assignment: Database models');
+  });
+
+  it('renders generated suggestion cards fully in English', () => {
+    mocks.activeTasks = [{ title: 'Bài tập Chương 2: Mô hình cơ sở dữ liệu' }];
+    setupEnglish();
+
+    expect(screen.getByText('Explain the knowledge needed to complete “Chapter 2 assignment: Database models”.')).toBeVisible();
+    expect(screen.queryByText(/Giải thích kiến thức/)).not.toBeInTheDocument();
+  });
+
+  it('sends the selected English UI locale with chatbot questions', async () => {
+    vi.mocked(askQuestion).mockResolvedValue({ kind: 'conversation', text: 'Hello!', citations: [], sources: [], suggestions: [] });
+    setupEnglish();
+
+    fireEvent.change(screen.getByPlaceholderText('Ask about concepts, exercises, or course materials...'), {
+      target: { value: 'Cơ sở dữ liệu là gì?' },
+    });
+    fireEvent.click(screen.getByTitle('Send question'));
+
+    await waitFor(() => expect(askQuestion).toHaveBeenCalledWith(
+      'Cơ sở dữ liệu là gì?', [], expect.any(AbortSignal), expect.any(Function), 'en',
+    ));
+  });
+
   it('submits with Enter and preserves Shift+Enter for multiline input', async () => {
     vi.mocked(askQuestion).mockResolvedValue({ kind: 'grounded', text: 'Trả lời', citations: [], sources: [], suggestions: [] });
     setup();
@@ -40,7 +80,7 @@ describe('student chatbot request lifecycle', () => {
     expect(askQuestion).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(askQuestion).toHaveBeenCalledOnce());
-    expect(askQuestion).toHaveBeenCalledWith('CSDL là gì?', [], expect.any(AbortSignal), expect.any(Function));
+    expect(askQuestion).toHaveBeenCalledWith('CSDL là gì?', [], expect.any(AbortSignal), expect.any(Function), 'vi');
   });
 
   it('renders social and out-of-scope replies without a false missing-source state', () => {
@@ -54,6 +94,25 @@ describe('student chatbot request lifecycle', () => {
     expect(screen.getByText('Ngoài phạm vi môn')).toBeVisible();
     expect(screen.queryByText('Chưa đủ nguồn')).not.toBeInTheDocument();
     expect(screen.queryByText('Chưa đủ nguồn để trả lời chắc chắn')).not.toBeInTheDocument();
+  });
+
+  it('keeps the original question in context when requesting an integrity-safe hint', async () => {
+    mocks.state.qaMessages = [
+      { id: 'question', role: 'user', text: 'Giúp mình tìm số lớn nhất trong SQL', createdAt: new Date().toISOString() },
+      { id: 'integrity', role: 'assistant', text: 'Mình không thể làm bài thay bạn.', kind: 'integrity', createdAt: new Date().toISOString() },
+    ];
+    vi.mocked(askHint).mockResolvedValue({ kind: 'hint', text: 'Bắt đầu bằng cách xác định cột cần so sánh.', citations: [], sources: [], suggestions: [] });
+
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Cho mình gợi ý' }));
+
+    await waitFor(() => expect(askHint).toHaveBeenCalledWith([
+      { role: 'user', content: 'Giúp mình tìm số lớn nhất trong SQL' },
+      { role: 'assistant', content: 'Mình không thể làm bài thay bạn.' },
+    ], 'vi'));
+    expect(mocks.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'ADD_QA', message: expect.objectContaining({ role: 'assistant', text: 'Bắt đầu bằng cách xác định cột cần so sánh.' }),
+    }));
   });
 
   it('keeps the Do tab focused on the course chatbot without a duplicate understanding check', () => {
@@ -118,6 +177,8 @@ describe('student chatbot request lifecycle', () => {
     vi.mocked(askQuestion).mockRejectedValue(new ApiError('RATE_LIMITED', 'Một yêu cầu đang xử lý', undefined, 10));
     setup(); send();
     await waitFor(() => expect(screen.getByText(/Có thể gửi lại sau/)).toBeInTheDocument());
+    expect(screen.getByText('Đã đạt giới hạn AI')).toBeVisible();
+    expect(screen.getByText(/Một yêu cầu đang xử lý/)).toBeVisible();
     expect(screen.getByTitle('Gửi câu hỏi')).toBeDisabled();
     expect(askQuestion).toHaveBeenCalledOnce();
   });

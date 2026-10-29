@@ -30,18 +30,27 @@ def decide_replan(
     planned = _finite(last_do.get("planned_minutes"))
     actual = _finite(last_do.get("actual_minutes"))
     completion = _finite(last_do.get("completion_percent"), 100)
+    observed_remaining = max(0, round(_finite(last_do.get("remaining_minutes"))))
     cause = normalize_planning_signal(signal)["cause"]
     normalized_signal = normalize_planning_signal(signal)
     if last_do.get("status") == "missed" and planned >= 30:
         reasons.append("missed_block")
     if planned > 0 and abs(actual - planned) >= 30 and abs(actual - planned) / planned >= 0.25:
         reasons.append("actual_time_deviation")
-    if planned >= 30 and completion < 80 and last_do.get("status") in {"blocked", "needs_more_time"}:
+    if last_do.get("status") in {"blocked", "needs_more_time"} and (
+        observed_remaining > 0 or (planned >= 30 and completion < 80)
+    ):
         reasons.append("unfinished_work")
     evidence_valid = planning_evidence_usable(latest_evidence)
+    failed_dimensions: list[str] = []
     if evidence_valid:
         dimensions = latest_evidence.get("dimensions") or {}
-        if any(dimensions.get(key) == "failed" for key in ("conceptual", "reasoning", "application", "transfer")):
+        failed_dimensions = [
+            key
+            for key in ("recall", "conceptual", "reasoning", "application", "transfer")
+            if dimensions.get(key) == "failed"
+        ]
+        if failed_dimensions:
             reasons.append("knowledge_gap_observed")
         # Low-confidence taxonomy hypotheses do not count as established misconceptions.
         if any(item.get("status") == "confirmed" for item in latest_evidence.get("misconceptions") or []):
@@ -64,7 +73,6 @@ def decide_replan(
             if value
         )
     )
-    observed_remaining = max(0, round(_finite(last_do.get("remaining_minutes"))))
     fingerprint = hashlib.sha256(
         json.dumps(
             {
@@ -94,6 +102,14 @@ def decide_replan(
             "cause": cause,
             "observed_remaining_minutes": observed_remaining,
             "signal_follow_up_minutes": int(normalized_signal["follow_up_minutes"]),
+            **({
+                "affected_knowledge_component_ids": list(
+                    dict.fromkeys(str(value) for value in latest_evidence.get("knowledge_component_ids") or [] if value)
+                ),
+                "failed_dimensions": failed_dimensions,
+                "evidence_confidence": str(latest_evidence.get("confidence") or ""),
+                "support_condition": str(latest_evidence.get("support_condition") or ""),
+            } if evidence_valid else {}),
         },
     }
     return _stability_guard(decision, reasons, previous, instant)
@@ -158,7 +174,8 @@ def decide_weekly_replan(
     failures = [
         (value, ref)
         for key, (value, ref) in latest_dimensions.items()
-        if key[-1] in {"conceptual", "reasoning", "application", "transfer"} and value == "failed"
+        if key[-1] in {"recall", "conceptual", "reasoning", "application", "transfer"}
+        and value == "failed"
     ]
     if failures:
         reasons.append("knowledge_gap_observed")

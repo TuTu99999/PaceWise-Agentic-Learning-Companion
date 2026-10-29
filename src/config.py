@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     private_api_key_file: str = "./data/private-api-p256.pem"
     customer_data_key_file: str = "./data/customer-data.key"
     google_signup_enabled: bool = True
+    # Demo onboarding: verified Gmail students receive the active, published
+    # catalog owned by one explicitly configured source instructor. This keeps
+    # other instructors' courses isolated while allowing the source instructor
+    # to add future courses without maintaining a code allowlist.
+    google_signup_auto_enroll_courses: bool = True
+    google_signup_auto_enroll_teacher_email: str = "teacher1@pacewise.edu.vn"
 
     # Web Push: localhost can use a persistent, automatically generated dev key.
     # Production must mount a stable private key and set a real contact address.
@@ -133,7 +139,9 @@ class Settings(BaseSettings):
     ai_burst_window_seconds: int = Field(default=10, ge=1, le=3600)
     ai_requests_per_minute: int = Field(default=10, ge=1, le=10000)
     ai_requests_per_hour: int = Field(default=60, ge=1, le=100000)
-    ai_daily_token_limit_per_user: int = Field(default=100000, ge=1)
+    # Zero disables the daily token quota. Production keeps a finite default;
+    # local/demo environments may explicitly opt out without disabling spam protection.
+    ai_daily_token_limit_per_user: int = Field(default=2000000, ge=0)
     ai_estimated_tokens_per_request: int = Field(default=8000, ge=1)
     ai_max_concurrent_per_user: int = Field(default=1, ge=1, le=100)
     ai_max_concurrent_global: int = Field(default=10, ge=1, le=10000)

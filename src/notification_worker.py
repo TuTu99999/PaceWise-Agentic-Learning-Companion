@@ -7,6 +7,7 @@ import time
 
 from src.config import get_settings
 from src.db import initialize_database
+from src.services.do_chat_memory import purge_expired_transcripts
 from src.services.sync_worker import record_worker_heartbeat
 from src.services.web_push import (
     deliver_due_reminders,
@@ -22,6 +23,9 @@ def run_notification_worker() -> None:
     settings = get_settings()
     while True:
         try:
+            # Transcript retention is privacy-critical and must not be skipped
+            # merely because a push provider fails later in this iteration.
+            purge_expired_transcripts(settings)
             recover_notification_leases(settings)
             if settings.sqs_notification_queue_url:
                 publish_due_reminder_jobs(settings)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import Base, get_db
 from app.integration_api import require_service_key
-from app.models import Course, CourseLifecycle, Enrollment
+from app.models import Course, CourseLifecycle, Enrollment, User
 from app.teacher_management import StrictModel, VersionInput, check_version, revision
 from app.telemetry import record_change
 
@@ -16,13 +16,12 @@ router = APIRouter(prefix="/api/pacewise/v1/teacher", dependencies=[Depends(requ
 
 
 def instructor(db, user_id):
-    if not db.scalar(select(Enrollment.id).where(Enrollment.user_id == user_id, Enrollment.role == "instructor")):
-        raise HTTPException(403, "Instructor enrollment required")
+    user = db.get(User, user_id, with_for_update=True)
+    if not user or user.role != "instructor":
+        raise HTTPException(403, "Instructor account required")
 
 
 def owned(db, user_id, course_id):
-    from app.models import User
-
     db.get(User, user_id, with_for_update=True)
     if not db.scalar(
         select(Enrollment.id).where(

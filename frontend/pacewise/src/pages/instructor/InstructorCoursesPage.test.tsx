@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InstructorCoursesPage } from './InstructorCoursesPage';
 import { fetchManagedCourses, fetchTeacherRoster, manageCourse, getCurrentSession, syncCanvas, teacherScheduleAction } from '../../services/api';
 import type { ManagedCourse } from '../../types/teacherManagement';
+import { clearInstructorPageCache } from '../../services/instructorPageCache';
 
 const { dispatch } = vi.hoisted(() => ({ dispatch: vi.fn() }));
 vi.mock('../../services/api', () => ({ fetchManagedCourses: vi.fn(), fetchTeacherRoster: vi.fn(), manageCourse: vi.fn(), getCurrentSession: vi.fn(), syncCanvas: vi.fn(), teacherScheduleAction: vi.fn() }));
@@ -14,7 +15,7 @@ vi.mock('../../components/domain/CourseMembersPanel', () => ({ CourseMembersPane
 vi.mock('./InstructorTasksPage', () => ({ InstructorTasksPage: () => <p>Tasks panel</p> }));
 vi.mock('../../components/domain/TeacherScheduleTools', () => ({ TeacherScheduleTools: () => <p>Schedule tools</p>, SchedulePreviewDetails: () => <p>Preview details</p> }));
 const course: ManagedCourse = { id: 1, code: 'CS101', name: 'Programming', term: 'Demo', archived: false, version: 'v1' };
-beforeEach(() => { vi.clearAllMocks(); vi.mocked(fetchManagedCourses).mockResolvedValue([course]); vi.mocked(fetchTeacherRoster).mockResolvedValue([{ id: 2, name: 'Student' }]);
+beforeEach(() => { clearInstructorPageCache(); vi.clearAllMocks(); vi.mocked(fetchManagedCourses).mockResolvedValue([course]); vi.mocked(fetchTeacherRoster).mockResolvedValue([{ id: 2, name: 'Student' }]);
   vi.mocked(syncCanvas).mockResolvedValue({ courses: [], tasks: [], courseData: {}, assessments: [], guidance: [] } as never); vi.mocked(getCurrentSession).mockResolvedValue(null); });
 const mount = () => render(<MemoryRouter><InstructorCoursesPage /></MemoryRouter>);
 
@@ -27,7 +28,12 @@ describe('single-web teacher courses', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Sinh viên' })); expect(screen.getByText('Members panel')).toBeInTheDocument();
     expect(manageCourse).not.toHaveBeenCalled();
   });
-  it('adds a course with explicitly selected owned students and does not re-login', async () => {
+  it('restores a fresh course list without requesting it again on tab return', async () => {
+    const first = mount(); await screen.findByText('Lesson panel'); first.unmount();
+    mount(); expect(screen.getByText('Lesson panel')).toBeInTheDocument();
+    expect(fetchManagedCourses).toHaveBeenCalledTimes(1);
+  });
+  it('adds a course with explicitly selected Google students and does not re-login', async () => {
     vi.mocked(manageCourse).mockResolvedValue({ ...course, id: 4 });
     mount(); await screen.findByText('Lesson panel'); fireEvent.click(screen.getByRole('button', { name: 'Thêm môn' }));
     fireEvent.change(await screen.findByRole('textbox', { name: /Mã môn/ }), { target: { value: 'NEW101' } }); fireEvent.change(screen.getByRole('textbox', { name: /Tên môn/ }), { target: { value: 'New course' } });

@@ -14,4 +14,13 @@ describe('studyBlockAccess', () => {
     expect(studyBlockAccess(block, at('19:30')).state).toBe('available');
     expect(studyBlockAccess(block, at('20:00')).state).toBe('ended');
   });
+
+  it('keeps a future planned block visible but waits for its learning prerequisite', () => {
+    const future = { ...block, earliestStartAt: '2026-10-04T18:30:00+07:00' };
+    expect(studyBlockAccess(future, at('18:00'))).toMatchObject({
+      state: 'waiting_prerequisite',
+      availableAt: at('18:30'),
+    });
+    expect(studyBlockAccess(future, at('18:30')).state).toBe('available');
+  });
 });

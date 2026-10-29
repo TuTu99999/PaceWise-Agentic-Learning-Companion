@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.services.plan_confirmation import confirm_partial_plan, confirmation_constraints
+from src.services.plan_confirmation import confirm_partial_plan, confirmation_constraints, effective_availability
 from src.services.plan_intelligence import evaluate_plan_quality
 
 NOW = datetime(2026, 10, 10, 8, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
@@ -118,3 +118,31 @@ def test_disabled_availability_cannot_authorize_confirmation():
     value = draft([block("outside")], input={"unavailable": [], "availability": [
         {"weekday": 5, "start": "09:00", "end": "22:00", "enabled": False}]})
     assert not preview(value)["canConfirm"]
+
+
+def test_routine_mode_uses_full_week_envelope_for_generation_and_confirmation():
+    workspace = {
+        "routineProfile": {"sleepTime": "13:00", "wakeTime": "07:00"},
+        "availability": [{"weekday": 5, "start": "18:00", "end": "19:00", "enabled": True}],
+        "unavailable": [],
+    }
+    generated = effective_availability(workspace, [])
+    assert len(generated) == 7
+    assert all(day["enabled"] and day["start"] == "00:00" and day["end"] == "24:00" for day in generated)
+
+    current = confirmation_constraints(
+        draft([block("outside-old-window", "08:30", "09:30"), block("sleep", "13:00", "14:00")],
+              input={"unavailable": [], "availability": generated}),
+        workspace,
+        [],
+    )
+    partial = preview(current)
+    assert partial["blockIds"] == ["outside-old-window"]
+    assert partial["excludedBlocks"][0]["reasons"][0]["code"] == "UNAVAILABLE_OVERLAP"
+
+
+def test_legacy_availability_remains_supported_without_routine_profile():
+    fallback = [{"weekday": 5, "start": "09:00", "end": "22:00", "enabled": True}]
+    saved = [{"weekday": 5, "start": "18:00", "end": "19:00", "enabled": True}]
+    assert effective_availability({"availability": saved}, fallback) == saved
+    assert effective_availability({}, fallback) == fallback

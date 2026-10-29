@@ -24,7 +24,7 @@ def _inputs():
     )
 
 
-def test_uncertainty_asks_same_stage_unseen_item_before_teacher():
+def test_uncertainty_asks_same_stage_unseen_item_before_staying_unknown():
     state, result, evidence, bank = _inputs()
     decision = review_decision(state, result, evidence, bank, "kc")
     assert decision["status"] == "verifying"
@@ -35,7 +35,9 @@ def test_uncertainty_asks_same_stage_unseen_item_before_teacher():
 def test_two_supplementary_questions_is_a_server_owned_limit():
     state, result, evidence, bank = _inputs()
     state["verification_count"] = 2
-    assert review_decision(state, result, evidence, bank, "kc")["status"] == "pending_review"
+    decision = review_decision(state, result, evidence, bank, "kc")
+    assert decision["status"] == "abstained"
+    assert decision["reason"] == "verification_limit"
 
 
 def test_evaluator_failure_is_not_a_student_deficit_or_human_review():

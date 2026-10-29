@@ -55,6 +55,8 @@ def test_cheating_is_guided(query):
     [
         "Giải thích khái niệm bằng ví dụ tương tự",
         "Gợi ý bước đầu tiên, mình sẽ tự làm",
+        "SQL viết tắt là gì?",
+        "Cho mình gợi ý",
         "Review my attempt and explain the mistake",
     ],
 )

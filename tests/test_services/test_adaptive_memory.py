@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from src.agents.workflows.do import evaluate_completion
 from src.config import get_settings
 from src.db import Base
 from src.persistence_models import (
@@ -12,6 +13,7 @@ from src.persistence_models import (
     LearnerMemory,
     LearningEvent,
     LearningEvidenceRecord,
+    StudyTimerSession,
 )
 from src.security import SessionContext
 from src.services.agent_memory import (
@@ -32,15 +34,14 @@ def test_do_metrics_survive_checkpoint_and_reflect_does_not_edit_knowledge_or_pl
     session = SessionContext(123, 456, (456,), "student", "Test", "test@example.edu", "x", "sid", 4102444800)
     settings = get_settings()
     with Session(engine) as db:
-        do = {
-            "action": "complete",
+        do = evaluate_completion({
             "block_id": "b1",
             "task_id": "t1",
             "planned_minutes": 60,
             "actual_minutes": 100,
-            "completion_percent": 50,
-            "status": "needs_more_time",
-        }
+            "work_result": "needs_more_time",
+            "remaining_minutes": 30,
+        })["output"]["do_session"]
         persist_agent_outcome(db, session, settings, {"workflow": "do", "output": {"do_session": do}}, None)
         persist_agent_outcome(
             db, session, settings, {"workflow": "do", "output": {"do_session": {"action": "assess"}}}, None
@@ -197,6 +198,7 @@ def test_confirmed_weekly_reflection_changes_next_plan_draft_without_auto_applyi
             },
         }
         persist_agent_outcome(db, session, settings, assessment_result, "Q-weekly")
+        assessment_decision = assessment_result["output"]["replan_decision"]
         evidence_id = assessment_result["output"]["learning_evidence"]["id"]
         record = db.get(LearningEvidenceRecord, evidence_id)
         assert record is not None
@@ -213,9 +215,12 @@ def test_confirmed_weekly_reflection_changes_next_plan_draft_without_auto_applyi
         today=date(2026, 10, 12),
     )
 
-    assert reflection["output"]["replan_decision"]["action"] == "propose_draft"
-    assert "knowledge_gap_observed" in reflection["output"]["replan_decision"]["reasons"]
-    assert reflection["output"]["replan_decision"]["auto_apply"] is False
+    assert assessment_decision["action"] == "propose_draft"
+    assert "knowledge_gap_observed" in assessment_decision["reasons"]
+    assert assessment_decision["auto_apply"] is False
+    # The weekly reflection enriches the same pending proposal instead of
+    # opening a duplicate proposal during the policy cooldown window.
+    assert reflection["output"]["replan_decision"]["action"] == "keep"
     assert "last_confirmed_plan" not in memory["profile"]
     assert sum(block["workMinutes"] for block in baseline["blocks"]) == 60
     assert sum(block["workMinutes"] for block in replanned["blocks"]) == 105
@@ -224,6 +229,102 @@ def test_confirmed_weekly_reflection_changes_next_plan_draft_without_auto_applyi
     assert diff["added"] or diff["removed"] or diff["moved"]
     assert diff["stability"] < 1
     assert diff["requires_confirmation"] is True
+    engine.dispose()
+
+
+def test_accepted_assessment_gap_changes_next_plan_but_keeps_old_schedule_until_confirmation():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    session = SessionContext(654, 987, (987,), "student", "Test", "test@example.edu", "x", "sid", 4102444800)
+    settings = get_settings()
+    plan_input = {
+        "weekStart": "2026-10-12",
+        "horizonEnd": "2026-10-18",
+        "tasks": [{"taskId": "task-1", "remainingMin": 60}],
+        "availability": [
+            {"weekday": weekday, "enabled": True, "start": "08:00", "end": "20:00"}
+            for weekday in range(7)
+        ],
+        "unavailable": [],
+        "preferred": ["morning"],
+    }
+    assignments = [{
+        "id": "task-1",
+        "title": "Bài tập quan hệ",
+        "deadline": "2026-10-18T23:59:00+07:00",
+        "knowledge_components": ["binary-relations"],
+    }]
+    baseline = build_plan_draft(plan_input, assignments, today=date(2026, 10, 12))
+    block_id = baseline["blocks"][0]["id"]
+    assessment = {
+        "workflow": "do",
+        "status": "completed",
+        "query": "Em chưa vận dụng được tính bắc cầu vào ví dụ này.",
+        "do_session": {"action": "assess"},
+        "assessment_review": {"status": "accepted"},
+        "request": {"assessment_attempt": {
+            "event_key": "assessment-plan-impact",
+            "block_id": block_id,
+            "response": "Em chưa vận dụng được tính bắc cầu vào ví dụ này.",
+            "first_attempt": True,
+            "hint_level": 0,
+        }},
+        "_trusted_assessment": {
+            "question": "Hãy vận dụng tính bắc cầu vào một quan hệ mới.",
+            "rubric_version": 2,
+            "answer_type": "open",
+            "knowledge_component_ids": ["binary-relations"],
+            "kc_provisional": False,
+        },
+        "assessment_result": {
+            "status": "đang hình thành",
+            "confidence": "Cao",
+            "evaluator_version": "test",
+            "evidence_quotes": ["Em chưa vận dụng được tính bắc cầu vào ví dụ này."],
+            "dimensions": {
+                "recall": "passed",
+                "conceptual": "passed",
+                "reasoning": "passed",
+                "application": "failed",
+                "transfer": "not_tested",
+                "retention": "not_tested",
+            },
+            "criterion_scores": [
+                {"criterion_id": "concept", "score": 3},
+                {"criterion_id": "application", "score": 1},
+            ],
+        },
+    }
+    with Session(engine) as db:
+        persist_agent_outcome(db, session, settings, {
+            "workflow": "plan",
+            "student_decision": {"action": "confirmed"},
+            "output": {"confirmed_plan": baseline},
+        }, None)
+        persist_agent_outcome(db, session, settings, assessment, "Q-plan-impact")
+        memory = load_learner_memory(db, session, settings)
+
+    replanned = build_plan_draft(
+        plan_input,
+        assignments,
+        learner_profile=memory["profile"],
+        mastery_profile=memory["mastery"],
+        today=date(2026, 10, 12),
+    )
+    decision = assessment["output"]["replan_decision"]
+    assert decision["action"] == "propose_draft"
+    assert decision["auto_apply"] is False
+    assert decision["repair_context"]["affected_task_ids"] == ["task-1"]
+    assert decision["repair_context"]["failed_dimensions"] == ["application"]
+    assert memory["profile"]["last_confirmed_plan"]["createdAt"] == baseline["createdAt"]
+    assert sum(block["workMinutes"] for block in baseline["blocks"]) == 60
+    proposed_minutes = sum(block["workMinutes"] for block in replanned["blocks"])
+    assert proposed_minutes >= 90
+    assert replanned["durationAdjustments"][0]["reviewAddedMin"] == 30
+    assert replanned["durationAdjustments"][0]["proposedTargetMin"] == proposed_minutes
+    diff = plan_diff(baseline["blocks"], replanned["blocks"])
+    assert diff["requires_confirmation"] is True
+    assert diff["added"] or diff["removed"] or diff["moved"]
     engine.dispose()
 
 
@@ -262,6 +363,43 @@ def test_failed_observation_records_gap_without_erasing_historical_demonstration
         assert snapshot["latest_observed_level"] == "no_evidence"
         assert "application" in snapshot["unresolved_dimensions"]
         assert mastery_for_component({"kc": snapshot}, "kc") == 0.25
+    engine.dispose()
+
+
+def test_assessment_before_do_completion_uses_durable_timer_task_for_replan():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    learner = SessionContext(123, 456, (456,), "student", "Test", "test@example.edu", "x", "sid", 4102444800)
+    settings = get_settings()
+    assessment = {
+        "workflow": "do",
+        "status": "completed",
+        "do_session": {"action": "assess"},
+        "request": {"assessment_attempt": {"block_id": "block-before-complete", "response": "wrong", "first_attempt": True}},
+        "source_refs": [{"id": "Q-timer", "citation": "chapter.pdf"}],
+        "_trusted_assessment": {
+            "question": "Explain the model.", "rubric_version": 1, "answer_type": "open",
+            "knowledge_component_ids": ["kc-model"], "kc_provisional": False,
+        },
+        "assessment_result": {
+            "status": "đang hình thành", "confidence": "Cao", "evaluator_version": "test",
+            "evidence_quotes": ["wrong"],
+            "dimensions": {"conceptual": "failed"},
+            "criterion_scores": [{"criterion_id": "concept", "score": 1, "evidence_quote": "wrong"}],
+        },
+    }
+    with Session(engine) as db:
+        db.add(StudyTimerSession(
+            id="SS-before-complete", institution_id=settings.institution_id, user_id=learner.user_id,
+            course_id=learner.course_id, block_id="block-before-complete", task_id="task-from-timer",
+            active_scope="scope-before-complete", state_json="{}", chat_json="[]",
+        ))
+        db.commit()
+        persist_agent_outcome(db, learner, settings, assessment, "Q-timer")
+        decision = assessment["output"]["replan_decision"]
+
+    assert decision["action"] == "propose_draft"
+    assert decision["repair_context"]["affected_task_ids"] == ["task-from-timer"]
     engine.dispose()
 
 

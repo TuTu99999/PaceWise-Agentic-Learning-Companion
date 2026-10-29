@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -46,6 +47,7 @@ from src.course_source.models import (
     SubmissionAttempt,
     SubmissionComment,
     SubmissionWorkflow,
+    TeacherTaskMetadata,
     User,
 )
 from src.course_source.pacewise_contracts import course_actor
@@ -283,6 +285,7 @@ def resolve_assignment_dates(db: Session, assignment: Assignment, user_id: int |
 
 def assignment_extension_payload(db: Session, assignment: Assignment, user_id: int | None = None) -> dict:
     config = _configuration(db, assignment.id)
+    metadata = db.get(TeacherTaskMetadata, assignment.id)
     group = db.get(AssignmentGroup, config.assignment_group_id) if config and config.assignment_group_id else None
     rubric_link = db.scalar(
         select(AssignmentRubric).where(AssignmentRubric.assignment_id == assignment.id)
@@ -300,6 +303,7 @@ def assignment_extension_payload(db: Session, assignment: Assignment, user_id: i
         "peer_reviews": config.peer_reviews if config else False,
         "group_category_id": config.group_category_id if config else None,
         "rubric": _rubric_payload(db, rubric) if rubric else None,
+        "resource_ids": sorted(set(json.loads(metadata.resource_ids_json or "[]"))) if metadata else [],
         **resolve_assignment_dates(db, assignment, user_id),
     }
 
@@ -417,7 +421,22 @@ def resource_extension_payload(db: Session, resource: Resource) -> dict:
         select(ResourceAccess).where(ResourceAccess.resource_id == resource.id)
     ).all()
     folder = db.get(ResourceFolder, latest.folder_id) if latest and latest.folder_id else None
+    planning_chapter = db.scalar(
+        select(CourseModule.name)
+        .join(ModuleItem)
+        .where(
+            CourseModule.course_id == resource.course_id,
+            ModuleItem.item_type == "resource",
+            ModuleItem.content_id == resource.id,
+        )
+        .order_by(CourseModule.position, CourseModule.id)
+        .limit(1)
+    )
+    course = db.get(Course, resource.course_id)
     return {
+        "course_code": course.code if course else str(resource.course_id),
+        "course_name": course.name if course else "",
+        "planning_chapter": planning_chapter or "",
         "folder": {"id": folder.id, "name": folder.name} if folder else None,
         "latest_version": {
             "id": latest.id,

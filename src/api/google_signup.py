@@ -127,7 +127,7 @@ def _identity(profile):
     return email.strip().lower(), subject, str(profile.get("name") or "Sinh viên")[:255]
 
 
-def _account(profile):
+def _account(profile, settings: Settings | None = None):
     from src.course_source.db import SessionLocal
     from src.course_source.models import Course, CourseLifecycle, Enrollment, GoogleIdentity, User
 
@@ -147,6 +147,15 @@ def _account(profile):
             db.commit()
         if not user or user.role != "student":
             raise GoogleCalendarError("Student identity required")
+        if (settings or get_settings()).google_signup_auto_enroll_courses:
+            from src.course_source.membership import auto_enroll_google_student
+
+            auto_enroll_google_student(
+                db,
+                user.id,
+                (settings or get_settings()).google_signup_auto_enroll_teacher_email,
+            )
+            db.commit()
         courses = list(
             db.scalars(
                 select(Enrollment.course_id)
@@ -200,7 +209,7 @@ async def callback(state, code, error, request, settings, db):
             upstream = await client._get(
                 GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {tokens.access_token}"}
             )
-            claims, courses = await asyncio.to_thread(_account, upstream.json())
+            claims, courses = await asyncio.to_thread(_account, upstream.json(), settings)
             result = _return(settings)
             _set_session_cookies(result, claims, settings, db, courses)
         except GoogleCalendarError as exc:

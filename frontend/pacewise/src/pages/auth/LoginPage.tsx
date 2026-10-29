@@ -14,10 +14,11 @@ import { useLocale } from '../../i18n/LocaleContext';
 
 export function LoginPage() {
   const { t } = useLocale();
-  useDocumentTitle('Đăng nhập');
   const { state, dispatch } = useAppStore();
+  useDocumentTitle('Đăng nhập', state.authReady && !state.user);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string; form?: string }>({});
   const [loading, setLoading] = useState(false);
 
@@ -84,11 +85,22 @@ export function LoginPage() {
             <Input label="Email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} error={errors.email} placeholder="ten@truong.edu.vn" />
             <Input
               label={t('Mật khẩu')}
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               error={errors.password}
+              endAdornment={(
+                <button
+                  type="button"
+                  className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-slate-100 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={t(showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu')}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((current) => !current)}
+                >
+                  <Icon name={showPassword ? 'eyeOff' : 'eye'} size={19} />
+                </button>
+              )}
             />
             <Button type="submit" size="lg" block loading={loading}>
               {t('Đăng nhập')}

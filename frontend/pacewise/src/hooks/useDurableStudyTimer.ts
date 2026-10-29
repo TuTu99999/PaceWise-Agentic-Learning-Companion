@@ -10,7 +10,7 @@ import {
 
 /** A frozen checkpoint after reload/offline; inactivity/hidden PDF never means failed learning. */
 export function useDurableStudyTimer(courseId: string | undefined, blockId: string | undefined, ready: boolean, note = '') {
-  const { dispatch } = useAppStore();
+  const { state, dispatch } = useAppStore();
   const [session, setSession] = useState<DurableStudySession | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -23,7 +23,9 @@ export function useDurableStudyTimer(courseId: string | undefined, blockId: stri
   const mirrored = useRef('');
   const generation = useRef(0);
   const noteRef = useRef(note);
+  const activeMirrorRef = useRef(state?.activeSession ?? null);
   noteRef.current = note;
+  activeMirrorRef.current = state?.activeSession ?? null;
   const apply = useCallback((next: DurableStudySession | null, active?: DurableStudySession | null) => {
     row.current = next; receivedAt.current = Date.now();
     if (!mounted.current) return;
@@ -41,6 +43,8 @@ export function useDurableStudyTimer(courseId: string | undefined, blockId: stri
         id: next.id, taskId: next.taskId, blockId: next.blockId, date: next.date,
         minutes: next.evaluation.actual_minutes, source: 'timer', plannedMin: next.planned_minutes,
         completedAt: next.checkpoint_at, completionPercent: next.evaluation.completion_percent,
+        remainingMinutes: next.evaluation.remaining_minutes, workResult: next.evaluation.work_result ?? undefined,
+        understandingSelfReport: next.evaluation.understanding_self_report,
         outcome: next.evaluation.status, blocker: next.evaluation.blocker, blockerNote: next.evaluation.blocker_note,
         needsRecovery: next.evaluation.needs_recovery, interruptionReason: next.evaluation.interruption_reason ?? next.interruption_reason,
         lengthFeeling: next.length_feeling, unobservedGap: next.unobserved_gap,
@@ -71,6 +75,37 @@ export function useDurableStudyTimer(courseId: string | undefined, blockId: stri
         const latest = await getStudyTimer(blockId);
         if (generation.current !== epoch) throw failure;
         apply(latest.session, latest.activeSession);
+        const restored = latest.session;
+        if (restored) {
+          const alreadyApplied = request.body.action === 'checkpoint'
+            || (['pause', 'recover'].includes(request.body.action) && restored.status === 'paused')
+            || (request.body.action === 'resume' && restored.status === 'running')
+            || (request.body.action === 'cancel' && restored.status === 'cancelled')
+            || (request.body.action === 'complete' && restored.status === 'completed')
+            || ['completed', 'cancelled'].includes(restored.status);
+          if (alreadyApplied) return restored;
+          const retried = { id: restored.id, body: { ...request.body, expectedVersion: restored.version,
+            eventKey: crypto.randomUUID() } as StudyTimerCommand };
+          pending.current = retried;
+          try {
+            const resolved = await updateStudyTimer(retried.id, retried.body);
+            if (generation.current !== epoch) return resolved;
+            pending.current = null; apply(resolved); return resolved;
+          } catch (retryFailure) {
+            if (retryFailure instanceof ApiError && retryFailure.code === 'CONFLICT') {
+              pending.current = null;
+              const reconciled = await getStudyTimer(blockId);
+              if (generation.current !== epoch) throw retryFailure;
+              apply(reconciled.session, reconciled.activeSession);
+              if (reconciled.session) return reconciled.session;
+            }
+            if (mounted.current) {
+              setError(retryFailure instanceof Error ? retryFailure.message : 'Chưa lưu được checkpoint.');
+              setElapsed((row.current?.observed_seconds ?? 0) * 1000);
+            }
+            throw retryFailure;
+          }
+        }
       }
       if (mounted.current) { setError(failure instanceof Error ? failure.message : 'Chưa lưu được checkpoint.'); setElapsed((row.current?.observed_seconds ?? 0) * 1000); }
       throw failure;
@@ -81,7 +116,13 @@ export function useDurableStudyTimer(courseId: string | undefined, blockId: stri
     generation.current += 1;
     mounted.current = true;
     row.current = null; pending.current = null; inFlight.current = false; mirrored.current = '';
-    setSession(null); setElapsed(0); setError('');
+    const mirroredSession = activeMirrorRef.current?.blockId === blockId ? activeMirrorRef.current : null;
+    const mirroredElapsed = mirroredSession
+      ? mirroredSession.accumulatedMs + (mirroredSession.runningSince === null
+        ? 0
+        : Math.min(45_000, Math.max(0, Date.now() - mirroredSession.runningSince)))
+      : 0;
+    setSession(null); setElapsed(mirroredElapsed); setError('');
     if (!ready || !blockId) return () => { mounted.current = false; };
     let active = true;
     setBusy(true);
@@ -103,9 +144,20 @@ export function useDurableStudyTimer(courseId: string | undefined, blockId: stri
     const heartbeat = window.setInterval(() => {
       if (!inFlight.current && !pending.current && navigator.onLine) void act('checkpoint').catch(() => {});
     }, 20_000);
+    const checkpointBeforeBackground = () => {
+      if (document.visibilityState === 'hidden' && !inFlight.current && !pending.current && navigator.onLine) {
+        void act('checkpoint').catch(() => {});
+      }
+    };
     const leave = () => { if (!inFlight.current) void act('recover').catch(() => {}); };
+    document.addEventListener('visibilitychange', checkpointBeforeBackground);
     window.addEventListener('pagehide', leave);
-    return () => { window.clearInterval(tick); window.clearInterval(heartbeat); window.removeEventListener('pagehide', leave); };
+    return () => {
+      window.clearInterval(tick);
+      window.clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', checkpointBeforeBackground);
+      window.removeEventListener('pagehide', leave);
+    };
   }, [session?.status, act, error]);
 
   const start = async () => {

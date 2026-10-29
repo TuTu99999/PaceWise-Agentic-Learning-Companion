@@ -112,6 +112,9 @@ class StudyTimerSession(Base):
     active_scope: Mapped[str | None] = mapped_column(String(200), nullable=True, unique=True, index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     state_json: Mapped[str] = mapped_column(Text, default="{}")
+    # Ephemeral learning-support transcript. It is encrypted at rest and
+    # erased when the Do session completes, is cancelled, or expires.
+    chat_json: Mapped[str] = mapped_column(EncryptedText("do-chat"), default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

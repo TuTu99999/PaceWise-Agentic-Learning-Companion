@@ -1,0 +1,29 @@
+{
+  "description": "Record Codex CLI and Codex app lifecycle events for AI20K AI Log.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/_pyrun.sh scripts/log_hook.py --tool=codex",
+            "commandWindows": "scripts\\_pyrun.cmd scripts\\log_hook.py --tool=codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/_pyrun.sh scripts/log_hook.py --tool=codex",
+            "commandWindows": "scripts\\_pyrun.cmd scripts\\log_hook.py --tool=codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

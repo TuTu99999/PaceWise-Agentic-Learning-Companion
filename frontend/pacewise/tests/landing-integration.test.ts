@@ -53,4 +53,10 @@ describe('landing page integration', () => {
       expect(image.getAttribute('alt')).toBeTruthy();
     });
   });
+
+  it('links the public privacy policy and terms from the homepage', () => {
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    expect(document.querySelector('footer a[href="/privacy"]')?.textContent).toBe('Chính sách quyền riêng tư');
+    expect(document.querySelector('footer a[href="/terms"]')?.textContent).toBe('Điều khoản sử dụng');
+  });
 });

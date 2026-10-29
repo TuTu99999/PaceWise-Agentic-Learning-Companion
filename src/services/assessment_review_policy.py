@@ -1,10 +1,10 @@
-"""Bounded verification before asynchronous human review (never a planning lock)."""
+"""Bounded verification for plan signals without per-answer human review."""
 
 from __future__ import annotations
 
 from src.services.assessment_policy import DIMENSION, question_fingerprint, select_item
 
-POLICY_VERSION = "assessment-review-v1"
+POLICY_VERSION = "assessment-signal-v2"
 MAX_VERIFICATION_QUESTIONS = 2
 UNCONFIRMED = {"verifying", "pending_review", "abstained"}
 
@@ -52,6 +52,6 @@ def review_decision(state: dict, result: dict, evidence: dict, bank: list[dict],
         return {**base, "status": "abstained", "reason": "insufficient_evidence"}
     return {
         **base,
-        "status": "pending_review",
+        "status": "abstained",
         "reason": "verification_limit" if candidate else "no_unseen_approved_item",
     }

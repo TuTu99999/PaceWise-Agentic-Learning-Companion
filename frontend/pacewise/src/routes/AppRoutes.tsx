@@ -13,7 +13,6 @@ const LaunchPage = lazy(() => import('../pages/auth/LaunchPage').then((module) =
 const AssessmentEditPage = lazy(() => instructorRouteLoaders.assessmentEdit().then((module) => ({ default: module.AssessmentEditPage })));
 const AssessmentPage = lazy(() => instructorRouteLoaders.assessment().then((module) => ({ default: module.AssessmentPage })));
 const InstructorOverviewPage = lazy(() => instructorRouteLoaders.overview().then((module) => ({ default: module.InstructorOverviewPage })));
-const ReviewQueuePage = lazy(() => instructorRouteLoaders.reviewQueue().then((module) => ({ default: module.ReviewQueuePage })));
 const InstructorSchedulePage = lazy(() => instructorRouteLoaders.schedule().then((module) => ({ default: module.InstructorSchedulePage })));
 const InstructorTasksPage = lazy(() => instructorRouteLoaders.tasks().then((module) => ({ default: module.InstructorTasksPage })));
 const InstructorProfilePage = lazy(() => instructorRouteLoaders.profile().then((module) => ({ default: module.InstructorProfilePage })));
@@ -54,7 +53,8 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignUpPage />} />
       <Route path="/launch" element={<LaunchPage />} />
-      <Route path="/403" element={<ForbiddenPage />} />
+      {/* Keep legacy/stale 403 history entries recoverable after login. */}
+      <Route path="/403" element={<RootRedirect />} />
 
       <Route
         element={
@@ -94,7 +94,7 @@ export function AppRoutes() {
         <Route path="/instructor/materials" element={<Navigate to="/instructor/courses" replace />} />
         <Route path="/instructor/assessment" element={<AssessmentPage />} />
         <Route path="/instructor/assessment/:itemId" element={<AssessmentEditPage />} />
-        <Route path="/instructor/review" element={<ReviewQueuePage />} />
+        <Route path="/instructor/review" element={<Navigate to="/instructor/assessment" replace />} />
         <Route path="/instructor/feedback" element={<Navigate to="/instructor" replace />} />
       </Route>
 

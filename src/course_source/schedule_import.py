@@ -10,6 +10,7 @@ from pydantic import Field, ValidationError, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from src.config import Settings, get_settings
 from src.course_source.course_management import course_json, owned
 from src.course_source.db import get_db
 from src.course_source.integration_api import require_service_key
@@ -274,8 +275,6 @@ def make_preview(db, user_id, payload):
                 historical_lessons = 0
                 for index in range(item.repeat_count):
                     start, end = item.starts_at + timedelta(weeks=index), item.ends_at + timedelta(weeks=index)
-                    if start <= now < end:
-                        raise ValueError("Không nhập buổi đang diễn ra; chọn buổi đã kết thúc hoặc chưa bắt đầu.")
                     if payload.mode == "replace_series" and start <= now:
                         raise ValueError("Sửa chuỗi chỉ thay các buổi chưa bắt đầu.")
                     if any(start < right and end > left for _, left, right in intervals):
@@ -285,8 +284,6 @@ def make_preview(db, user_id, payload):
                 counts["lessons"] += item.repeat_count
                 counts["historical_lessons"] += historical_lessons
             elif row.sheet == "Tasks":
-                if item.due_at <= now:
-                    raise ValueError("Deadline phải ở tương lai.")
                 allowed_names = imported_group_names.get(row.course_id, existing_group_names.get(row.course_id, set()))
                 if item.group_name and item.group_name.casefold() not in allowed_names:
                     raise ValueError("Tên nhóm điểm không có trong sheet Weights hoặc môn hiện tại.")
@@ -425,7 +422,12 @@ def find_batch(db, user_id, ticket):
 
 
 @router.post("/confirm")
-def confirm(payload: ConfirmInput, user_id: int, db: Session = Depends(get_db)):
+def confirm(
+    payload: ConfirmInput,
+    user_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
     batch = find_batch(db, user_id, payload.ticket)
     original = json.loads(batch.preview_json)
     for identifier in original["states"]:
@@ -461,6 +463,16 @@ def confirm(payload: ConfirmInput, user_id: int, db: Session = Depends(get_db)):
             db.flush()
             db.add(Enrollment(user_id=user_id, course_id=course.id, role="instructor"))
             db.add(CourseLifecycle(course_id=course.id, archived=False))
+            db.flush()
+            if settings.google_signup_auto_enroll_courses:
+                from src.course_source.membership import auto_enroll_google_students
+
+                auto_enroll_google_students(
+                    db,
+                    course.id,
+                    user_id,
+                    settings.google_signup_auto_enroll_teacher_email,
+                )
             record_change(
                 db,
                 actor_user_id=user_id,

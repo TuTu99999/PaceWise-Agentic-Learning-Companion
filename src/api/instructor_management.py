@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import logging
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +19,7 @@ from src.services.lms_client import LMSClient
 
 router = APIRouter(prefix="/instructor/manage", tags=["Instructor authoring"])
 _workbook_slots = asyncio.Semaphore(4)
+logger = logging.getLogger(__name__)
 
 
 def scope(session, course_id=None):
@@ -237,6 +240,47 @@ async def create(
 ):
     scope(session, course_id)
     return await forward("POST", f"/courses/{course_id}/{resource}", session, settings, payload)
+
+
+def cleanup_owned_resource(source_url: str, settings: Settings) -> None:
+    """Best-effort cleanup after the source transaction makes a file inaccessible."""
+    if settings.course_source_mode != "standalone":
+        return
+    if source_url.startswith("pacewise-object://"):
+        from src.services.course_object_store import delete_object, object_key
+
+        delete_object(settings, object_key(source_url))
+        return
+    if not source_url.startswith("/api/files/"):
+        return
+    filename = source_url.removeprefix("/api/files/")
+    directory = Path(settings.course_upload_dir).resolve()
+    target = (directory / filename).resolve()
+    if Path(filename).name != filename or target.parent != directory:
+        logger.warning("Skipped invalid course resource path during cleanup")
+        return
+    target.unlink(missing_ok=True)
+
+
+@router.delete("/courses/{course_id}/resources/{resource_id}")
+async def delete_resource(
+    course_id: int,
+    resource_id: int,
+    session: SessionContext = Depends(require_csrf),
+    settings: Settings = Depends(get_settings),
+):
+    scope(session, course_id)
+    result = await forward("DELETE", f"/courses/{course_id}/resources/{resource_id}", session, settings)
+    source_url = str(result.pop("source_url", ""))
+    should_delete = bool(result.pop("delete_stored_object", False))
+    if should_delete and source_url:
+        try:
+            await asyncio.to_thread(cleanup_owned_resource, source_url, settings)
+        except Exception:
+            # Access has already been revoked and the deletion event will remove
+            # the AI index. A storage lifecycle sweep can collect a rare orphan.
+            logger.exception("Course resource metadata was deleted but object cleanup failed")
+    return result
 
 
 @router.put("/courses/{course_id}/weights")

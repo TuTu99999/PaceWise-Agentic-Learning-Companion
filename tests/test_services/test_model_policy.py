@@ -24,7 +24,7 @@ def wrapper(provider, *, task="qa", scope=None, **settings):
     )
 
 
-def test_cache_is_scoped_bounded_expires_and_does_not_cache_assessment():
+def test_cache_is_scoped_bounded_expires_and_only_caches_safe_exact_tasks():
     class Provider:
         calls = 0
 
@@ -44,14 +44,21 @@ def test_cache_is_scoped_bounded_expires_and_does_not_cache_assessment():
     time.sleep(1.05)
     first.invoke(messages)
     assert provider.calls == 4
+    plan = wrapper(provider, task="plan", scope=scope + ":plan")
+    plan.invoke(messages)
+    plan.invoke(messages)
+    assert provider.calls == 5
     assessment = wrapper(provider, task="assessment", scope=scope)
     assessment.invoke(messages)
     assessment.invoke(messages)
-    assert provider.calls == 6
+    assert provider.calls == 7
     assert model_tier("assessment") == "fast"
     assert model_tier("qa", "complex") == "fast"
     assert model_tier("qa") == "fast"
-    assert model_tier("reflect") == "reasoning"
+    assert model_tier("plan") == "fast"
+    assert model_tier("reflect") == "fast"
+    assert model_tier("reflect", "complex") == "reasoning"
+    assert model_tier("recover") == "reasoning"
 
 
 def test_1000_synthetic_requests_bound_provider_work_and_reject_overload():

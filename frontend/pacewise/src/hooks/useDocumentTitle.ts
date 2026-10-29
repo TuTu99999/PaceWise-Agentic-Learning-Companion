@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useLayoutEffect } from 'react';
 import { useLocale } from '../i18n/LocaleContext';
 
-export function useDocumentTitle(title: string) {
+export function useDocumentTitle(title: string, enabled = true) {
   const { t } = useLocale();
   const localized = t(title);
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!enabled) return;
     document.title = `${localized} · PaceWise`;
-  }, [localized]);
+  }, [enabled, localized]);
 }

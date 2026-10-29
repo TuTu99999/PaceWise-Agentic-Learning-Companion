@@ -20,6 +20,14 @@ def test_progresses_only_after_current_dimension_passes(stage, index):
     assert result["status"] == ("completed" if stage == "transfer" else "active")
 
 
+def test_teacher_scoped_single_stage_checkpoint_completes_without_forcing_all_five_stages():
+    outcome = {"assessment_result": {"status": "demonstrated", "dimensions": {"application": "passed"}}}
+
+    result = next_step("application", outcome, hint_level=0, attempts=1, stages=["application"])
+
+    assert result == {"status": "completed", "stage": "application", "reason": "evidence_accepted"}
+
+
 @pytest.mark.parametrize("stage", STAGES)
 def test_hinted_pass_requires_unseen_verification(stage):
     outcome = {"assessment_result": {"status": "demonstrated", "dimensions": {DIMENSION[stage]: "passed"}}}

@@ -16,12 +16,19 @@ from src.services.deadline_risk import cumulative_deadline_risks
 from src.services.notification_policy import StudyPreferences
 from src.services.plan_intelligence import (
     apply_estimate,
+    build_template_milestones,
     enrich_task_milestones,
     evaluate_plan_quality,
     normalize_reflection_feedback,
     planning_mastery_risk,
 )
-from src.services.planning_time import block_at, deadline_at, partition_open_assignments
+from src.services.plan_progress import observed_plan_progress
+from src.services.planning_time import (
+    assignment_available_at,
+    block_at,
+    deadline_at,
+    partition_open_assignments,
+)
 from src.services.study_activity import activity_context, effective_rhythm
 
 MIN_SLOT_MINUTES = 30
@@ -54,6 +61,35 @@ def _fallback_milestones(item: dict[str, Any]) -> list[dict[str, Any]]:
     """
     assignment = item["assignment"]
     task_id = item["task_id"]
+    target = max(MIN_SLOT_MINUTES, int(item["target"]))
+    # Use the same evidence-aware decomposition as Plan Agent.  The previous
+    # fallback collapsed every <=90-minute assignment into one generic
+    # "Hoàn thành..." milestone, which discarded parsed assignment questions
+    # and made the calendar look no smarter than manual scheduling.
+    assignment_parts = [
+        part
+        for part in assignment.get("assignment_parts") or []
+        if isinstance(part, dict) and part.get("partId") and part.get("content")
+    ]
+    if len(assignment_parts) >= 2:
+        return [
+            {
+                "milestoneId": str(milestone["milestone_id"]),
+                "title": str(milestone["title"]),
+                "deliverable": str(milestone.get("deliverable") or ""),
+                "estimatedMin": int(milestone.get("estimated_minutes") or target),
+                "dependsOn": [str(value) for value in milestone.get("depends_on") or []],
+                "sourceRefs": [str(value) for value in milestone.get("source_refs") or []],
+                "rubricCriteria": [str(value) for value in milestone.get("rubric_criteria") or []],
+                "assignmentPartIds": [str(value) for value in milestone.get("assignment_part_ids") or []],
+                "decompositionSource": str(milestone.get("decomposition_source") or "template"),
+                "difficulty": milestone.get("difficulty"),
+                "allocationBasis": milestone.get("allocation_basis"),
+            }
+            for milestone in build_template_milestones(assignment, target_minutes=target)
+            if str(milestone.get("task_id") or task_id) == task_id
+        ]
+
     title = str(assignment.get("title") or "nhiệm vụ")
     folded = title.casefold()
     rubric = assignment.get("rubric") or {}
@@ -88,7 +124,6 @@ def _fallback_milestones(item: dict[str, Any]) -> list[dict[str, Any]]:
             ("Rà soát và chuẩn bị nộp", "Nhiệm vụ sẵn sàng nộp", 25),
         ]
 
-    target = max(MIN_SLOT_MINUTES, int(item["target"]))
     if target <= MAX_BLOCK_MINUTES:
         return [
             {
@@ -242,6 +277,30 @@ def _inside_self_study_window(
     return any(start <= interval[0] and interval[1] <= end for start, end in _self_study_ranges(current, slots))
 
 
+def _inside_preferred_window(
+    current: date,
+    interval: list[int],
+    slots: list[dict[str, Any]],
+    preferred: str | list[str],
+) -> bool:
+    """Whether a block fits any learner preference (never a hard constraint)."""
+    if _inside_self_study_window(current, interval, slots):
+        return True
+    windows = {
+        "late_night": (0, 5 * 60),
+        "morning": (5 * 60, 12 * 60),
+        "afternoon": (12 * 60, 17 * 60),
+        "evening": (17 * 60, 24 * 60),
+    }
+    values = preferred if isinstance(preferred, list) else [preferred]
+    return any(
+        value in windows
+        and windows[value][0] <= interval[0]
+        and interval[1] <= windows[value][1]
+        for value in values
+    )
+
+
 def _free_intervals(
     current: date,
     availability: list[dict[str, Any]],
@@ -289,6 +348,49 @@ def _free_intervals(
             continue
     intervals = [item for item in intervals if item[1] - item[0] >= MIN_SLOT_MINUTES]
     return _ordered_intervals(intervals, preferred, preferred_ranges)
+
+
+def _next_study_window(
+    current: date,
+    start: int,
+    end: int,
+    minimum_span: int,
+    break_minutes: int,
+    blocks: list[dict[str, Any]],
+    fallback_break_minutes: int,
+) -> tuple[int, int] | None:
+    """Find the earliest window that keeps the requested inter-session break.
+
+    Availability ranges are ordered independently. Without this day-wide check,
+    a block placed in one preferred range can be followed too closely by a block
+    selected from another range.
+    """
+
+    positioned: list[tuple[int, int, int]] = []
+    for block in blocks:
+        if block.get("status") == "history" or str(block.get("date") or "")[:10] != current.isoformat():
+            continue
+        try:
+            block_start = _clock_to_minutes(str(block.get("start")))
+            block_end = _clock_to_minutes(str(block.get("end")))
+            rhythm = block.get("rhythm") if isinstance(block.get("rhythm"), dict) else {}
+            block_break = int(rhythm.get("breakMinutes", fallback_break_minutes))
+        except (TypeError, ValueError):
+            continue
+        if block_end > block_start:
+            positioned.append((block_start, block_end, max(0, block_break)))
+
+    cursor = start
+    for block_start, block_end, block_break in sorted(positioned):
+        required_break = max(0, break_minutes, block_break)
+        latest_end_before_block = block_start - required_break
+        if cursor + minimum_span <= latest_end_before_block:
+            return cursor, min(end, latest_end_before_block)
+        if cursor < block_end + required_break:
+            cursor = block_end + required_break
+        if cursor + minimum_span > end:
+            return None
+    return (cursor, end) if cursor + minimum_span <= end else None
 
 
 def build_plan_draft(
@@ -395,11 +497,26 @@ def build_plan_draft(
         course_id = str(assignment.get("course_id") or assignment.get("courseId") or "")
         value = profiles.get(course_id, {})
         return value if isinstance(value, dict) else {}
+    observed_progress = observed_plan_progress(learner_profile)
     for item in plan_input.get("tasks") or []:
         task_id = str(item.get("taskId") or "")
         assignment = assignments_by_id.get(task_id)
         remaining = max(0, int(item.get("remainingMin") or 0))
-        if assignment and remaining:
+        if task_id in observed_progress:
+            remaining = int(observed_progress[task_id]["remaining_minutes"])
+        if assignment:
+            reflection_signals = normalize_reflection_feedback(learner_profile, task_id=task_id)
+            assignment_mastery = scoped_mastery(assignment)
+            mastery_risk = planning_mastery_risk(assignment, assignment_mastery)
+            adaptive_review = max(
+                int(reflection_signals["followUpMinutes"]),
+                MIN_SLOT_MINUTES if mastery_risk > 0.5 else 0,
+            )
+            # Completing the original Do work closes that work; a confirmed
+            # Reflect follow-up is separate new review work and must survive a
+            # zero remaining baseline.
+            if remaining <= 0 and adaptive_review <= 0:
+                continue
             reported_remaining = remaining
             if (
                 replan_proposal.get("action") == "propose_draft"
@@ -432,16 +549,6 @@ def build_plan_draft(
             due_day = (
                 due.date() if len(str(deadline_value or "")) > 10 else _parse_deadline(deadline_value, horizon_end)
             )
-            reflection_signals = normalize_reflection_feedback(
-                learner_profile,
-                task_id=task_id,
-            )
-            assignment_mastery = scoped_mastery(assignment)
-            mastery_risk = planning_mastery_risk(assignment, assignment_mastery)
-            adaptive_review = max(
-                int(reflection_signals["followUpMinutes"]),
-                MIN_SLOT_MINUTES if mastery_risk > 0.5 else 0,
-            )
             selected.append(
                 {
                     "task_id": task_id,
@@ -450,6 +557,7 @@ def build_plan_draft(
                     "deadline": due_day,
                     "deadline_at": due,
                     "deadline_minute": due.hour * 60 + due.minute if due.date() == due_day else 1440,
+                    "available_at": assignment_available_at(assignment, timezone_name),
                     "priority": str(assignment.get("priority") or "medium"),
                     # Legacy workspace values remain readable, but the removed
                     # manual-priority control must not silently affect new plans.
@@ -491,12 +599,26 @@ def build_plan_draft(
         if not milestone_id:
             continue
         task_id = str(raw.get("task_id") or raw.get("taskId") or raw.get("assignment_id") or "").strip()
+        completed = observed_progress.get(task_id, {})
+        completed_milestones = set(completed.get("completed_milestone_ids") or [])
+        completed_parts = set(completed.get("completed_assignment_part_ids") or [])
+        raw_parts = {
+            str(value)
+            for value in (raw.get("assignment_part_ids") or raw.get("assignmentPartIds") or [])
+            if str(value)
+        }
+        if milestone_id in completed_milestones or (raw_parts and raw_parts <= completed_parts):
+            continue
         normalized = {
             "milestoneId": milestone_id,
             "title": str(raw.get("title") or milestone_id),
             "deliverable": str(raw.get("deliverable") or ""),
             "estimatedMin": max(15, int(raw.get("estimated_minutes") or raw.get("estimatedMin") or 60)),
-            "dependsOn": [str(value) for value in (raw.get("depends_on") or raw.get("dependsOn") or [])],
+            "dependsOn": [
+                str(value)
+                for value in (raw.get("depends_on") or raw.get("dependsOn") or [])
+                if str(value) not in completed_milestones
+            ],
             "sourceRefs": [
                 str(value) for value in (raw.get("source_refs") or raw.get("sourceRefs") or []) if str(value).strip()
             ],
@@ -506,6 +628,11 @@ def build_plan_draft(
                 if str(value).strip()
             ],
             "knowledgeComponents": list(raw.get("knowledge_components") or raw.get("knowledgeComponents") or []),
+            "assignmentPartIds": [
+                str(value)
+                for value in (raw.get("assignment_part_ids") or raw.get("assignmentPartIds") or [])
+                if str(value).strip()
+            ],
             "mappingConfidence": raw.get("mapping_confidence") or raw.get("mappingConfidence"),
             "decompositionSource": str(raw.get("decomposition_source") or raw.get("decompositionSource") or "llm"),
             "difficulty": raw.get("difficulty"),
@@ -627,6 +754,7 @@ def build_plan_draft(
     pinned_minutes: dict[str, int] = {task_id: 0 for task_id in selected_by_id}
     pinned_blocks: list[dict[str, Any]] = []
     history_blocks: list[dict[str, Any]] = []
+    history_floor_by_task: dict[str, tuple[date, int]] = {}
     for raw in plan_input.get("pinnedBlocks") or []:
         task_id = str(raw.get("taskId") or "")
         selected_item = selected_by_id.get(task_id)
@@ -636,14 +764,15 @@ def build_plan_draft(
             end_minute = _clock_to_minutes(str(raw.get("end")))
         except (TypeError, ValueError):
             continue
-        if (
-            block_date < schedule_start
-            or (block_date == current and end_minute <= schedule_floor_minute)
-            or raw.get("status") == "history"
-        ):
+        elapsed = block_date < schedule_start or (
+            block_date == current and end_minute <= schedule_floor_minute
+        )
+        # Time passing is not completion evidence. Only server-protected history
+        # survives re-analysis; an elapsed, unused Do block is released so its
+        # work can be placed again before the assignment deadline.
+        if raw.get("status") == "history":
             if week_start <= block_date <= horizon_end:
-                history_blocks.append(
-                    {
+                history_block = {
                         "id": str(raw.get("id") or f"blk-{uuid4().hex[:12]}"),
                         "taskId": task_id,
                         "milestoneId": raw.get("milestoneId"),
@@ -654,11 +783,31 @@ def build_plan_draft(
                         "status": "history",
                         "placementSource": str(raw.get("placementSource") or "student"),
                     }
+                history_blocks.append(history_block)
+                if task_id:
+                    previous_floor = history_floor_by_task.get(task_id)
+                    next_floor = (block_date, end_minute)
+                    if previous_floor is None or next_floor > previous_floor:
+                        history_floor_by_task[task_id] = next_floor
+                # Completed study is immutable evidence and remains occupied
+                # during re-plan, even when the learner finished it early.
+                unavailable.append(
+                    {
+                        "date": block_date.isoformat(),
+                        "weekday": block_date.weekday(),
+                        "start": _minutes_to_clock(start_minute),
+                        "end": _minutes_to_clock(end_minute),
+                        "category": "completed_study",
+                    }
                 )
+            continue
+        if elapsed:
             continue
         # Release only future AI placements. Elapsed/completed blocks above
         # survive even when their task was removed from the new selection.
         started = (
+            raw.get("status") == "active"
+            and
             (now is not None or today is None)
             and block_date == current
             and start_minute <= current_time.hour * 60 + current_time.minute
@@ -671,6 +820,11 @@ def build_plan_draft(
             block_date > horizon_end
             or end_minute <= start_minute
             or block_at(block_date.isoformat(), str(raw["end"]), timezone_name) > selected_item["deadline_at"]
+            or (
+                selected_item["available_at"] is not None
+                and block_at(block_date.isoformat(), str(raw["start"]), timezone_name)
+                < selected_item["available_at"]
+            )
         ):
             continue
         free_before_pin = _free_intervals(block_date, availability, unavailable, preferred)
@@ -689,6 +843,11 @@ def build_plan_draft(
             "status": "confirmed" if block_date <= commitment_end else "tentative",
             "placementSource": "student",
             "lockedOngoing": started,
+            **(
+                {"earliestStartAt": selected_item["available_at"].isoformat()}
+                if selected_item["available_at"]
+                else {}
+            ),
             "checkpointMinutes": max(0, min(int(raw.get("checkpointMinutes") or 0), end_minute - start_minute)),
             "activityType": raw.get("activityType", "unknown"),
             "activitySource": raw.get("activitySource", "unmapped"),
@@ -723,6 +882,18 @@ def build_plan_draft(
         pinned_minutes.values()
     )
     blocks: list[dict[str, Any]] = [*history_blocks, *pinned_blocks]
+
+    def scheduled_day_minutes(day: date) -> int:
+        """Balance new work across the rolling window instead of filling today first."""
+
+        return sum(
+            max(0, _clock_to_minutes(str(block.get("end"))) - _clock_to_minutes(str(block.get("start"))))
+            for block in blocks
+            if str(block.get("date") or "") == day.isoformat()
+            and block.get("start")
+            and block.get("end")
+        )
+
     shortfalls: list[dict[str, Any]] = []
     for item in selected:
         task_milestones = [value for value in planning_milestones if value["taskId"] == item["task_id"]]
@@ -734,6 +905,7 @@ def build_plan_draft(
             (day, interval_order, interval)
             for day, intervals in free_by_day.items()
             if schedule_start <= day <= last_day
+            and (item["available_at"] is None or day >= item["available_at"].date())
             for interval_order, interval in enumerate(intervals)
         ]
         # Explicit self-study windows are learner intent, not busy time. A
@@ -765,18 +937,30 @@ def build_plan_draft(
             value
             for value in candidate_intervals
             if min(value[2][1], item["deadline_minute"] if value[0] == item["deadline"] else 1440)
-            - value[2][0]
+            - max(
+                value[2][0],
+                item["available_at"].hour * 60 + item["available_at"].minute
+                if item["available_at"] is not None and value[0] == item["available_at"].date()
+                else value[2][0],
+            )
             >= required_span
         ]
         fitting_self_study = [
             value for value in fitting_candidates if _inside_self_study_window(value[0], value[2], unavailable)
         ]
         if fitting_self_study:
-            chosen = min(fitting_self_study, key=lambda value: (value[0], value[2][0]))
+            chosen = min(
+                fitting_self_study,
+                key=lambda value: (scheduled_day_minutes(value[0]), value[0], value[2][0]),
+            )
         elif fitting_candidates:
-            # Within the earliest usable day, _free_intervals has already put
-            # the learner's preferred period first.
-            chosen = min(fitting_candidates, key=lambda value: (value[0], value[1]))
+            # Balance work across the rolling planning window. Within equally
+            # loaded days, keep chronological order and the learner's preferred
+            # period ordering produced by _free_intervals.
+            chosen = min(
+                fitting_candidates,
+                key=lambda value: (scheduled_day_minutes(value[0]), value[0], value[1]),
+            )
         else:
             chosen = None
         if chosen is not None:
@@ -789,7 +973,12 @@ def build_plan_draft(
             )
         else:
             candidate_intervals.sort(key=lambda value: (value[0], value[2][0]))
+        history_floor = history_floor_by_task.get(item["task_id"])
+        task_floor_day: date | None = history_floor[0] if history_floor else None
+        task_floor_minute = (history_floor[1] + break_minutes) if history_floor else 0
         for day, _, interval in candidate_intervals:
+            if task_floor_day is not None and day < task_floor_day:
+                continue
             cutoff = item["deadline_minute"] if day == item["deadline"] else 1440
             effective_end = min(interval[1], cutoff)
             while remaining > 0:
@@ -803,10 +992,27 @@ def build_plan_draft(
                 milestone = task_milestones[milestone_index] if milestone_index < len(task_milestones) else None
                 block_rhythm = milestone["rhythm"] if milestone else effective_rhythm(preferences, None, "unknown")
                 work_limit = block_rhythm["sessionMinutes"] - checkpoint_minutes
-                if effective_end - interval[0] < min(MIN_SLOT_MINUTES, remaining, milestone_remaining, work_limit) + checkpoint_minutes:
+                minimum_work = min(MIN_SLOT_MINUTES, remaining, milestone_remaining, work_limit)
+                candidate_start = max(
+                    interval[0],
+                    task_floor_minute if task_floor_day == day else interval[0],
+                    item["available_at"].hour * 60 + item["available_at"].minute
+                    if item["available_at"] is not None and day == item["available_at"].date()
+                    else interval[0],
+                )
+                window = _next_study_window(
+                    day,
+                    candidate_start,
+                    effective_end,
+                    minimum_work + checkpoint_minutes,
+                    block_rhythm["breakMinutes"],
+                    blocks,
+                    break_minutes,
+                )
+                if window is None:
                     break
-                duration = min(remaining, milestone_remaining, work_limit, effective_end - interval[0] - checkpoint_minutes)
-                start = interval[0]
+                start, window_end = window
+                duration = min(remaining, milestone_remaining, work_limit, window_end - start - checkpoint_minutes)
                 blocks.append(
                     {
                         "id": f"blk-{uuid4().hex[:12]}",
@@ -816,6 +1022,7 @@ def build_plan_draft(
                         "date": day.isoformat(),
                         "start": _minutes_to_clock(start),
                         "end": _minutes_to_clock(start + duration + checkpoint_minutes),
+                        **({"earliestStartAt": item["available_at"].isoformat()} if item["available_at"] else {}),
                         "workMinutes": duration,
                         "checkpointMinutes": checkpoint_minutes,
                         "activityType": milestone["activityType"] if milestone else "unknown",
@@ -823,11 +1030,22 @@ def build_plan_draft(
                         "rhythm": block_rhythm,
                         "status": "confirmed" if day <= commitment_end else "tentative",
                         "placementSource": "agent",
+                        "outsidePreferred": not _inside_preferred_window(
+                            day,
+                            [start, start + duration + checkpoint_minutes],
+                            unavailable,
+                            preferred,
+                        ),
                     }
                 )
                 remaining -= duration
                 milestone_remaining -= duration
-                interval[0] = min(interval[1], interval[0] + duration + checkpoint_minutes + block_rhythm["breakMinutes"])
+                task_floor_day = day
+                task_floor_minute = start + duration + checkpoint_minutes + block_rhythm["breakMinutes"]
+                interval[0] = min(
+                    interval[1],
+                    task_floor_minute,
+                )
             if remaining <= 0:
                 break
         if remaining:

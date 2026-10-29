@@ -15,6 +15,7 @@ WORKDIR /app
 # OCR is a bounded fallback for image-only course PDFs. It is not used when
 # the PDF already has a text layer.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-vie \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip uninstall -y pip setuptools wheel

@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from src.config import Settings
 from src.db import Base, get_db
 from src.main import app
 from src.persistence_models import (
@@ -60,8 +61,12 @@ def checkpoint_environment(monkeypatch):
                             {
                                 "status": "approved",
                                 "version": 1,
+                                "topic": "Relations",
+                                "question": f"{stage} question {variant}",
+                                "source": "relations.pdf · page 3",
                                 "assessmentStage": stage,
                                 "answerType": "multiple_choice" if stage == "recall" else "open",
+                                "correctAnswer": "A" if stage == "recall" else None,
                                 "knowledgeComponentIds": ["relation.transitivity"],
                                 "level": "recognition",
                                 "rubric": ["Correct explanation", "Correct reasoning"],
@@ -79,8 +84,7 @@ def checkpoint_environment(monkeypatch):
         db.commit()
 
     async def service_get(_client, path, _params=None):
-        assert path.endswith("/quizzes")
-        return [{"title": "Relations", "questions": bank}] if "/7001/" in path else []
+        raise AssertionError(f"Assessment must not read legacy quizzes: {path}")
 
     monkeypatch.setattr("src.services.lms_client.LMSClient.service_get", service_get)
 
@@ -140,6 +144,184 @@ async def _answer(client, state, answer="correct explanation", key=None):
 
 
 @pytest.mark.asyncio
+async def test_fixed_single_stage_blueprint_starts_at_teacher_stage_and_completes(client, checkpoint_environment):
+    sessions, _, _ = checkpoint_environment
+    with sessions() as db:
+        row = db.get(InstructorAction, "Q-91030")
+        payload = json.loads(row.payload_json)
+        payload["questionDesign"] = {
+            "mode": "fixed",
+            "relation_property": "transitive",
+            "stages": ["application"],
+            "reference_text": "",
+        }
+        row.payload_json = json.dumps(payload)
+        db.commit()
+
+    response = await client.post(
+        "/api/v1/do/assessment/start",
+        json={"course_id": 7001, "block_id": "single-stage", "assessment_id": "Q-91030"},
+    )
+    assert response.status_code == 200, response.text
+    state = response.json()
+    assert state["stage"] == "application"
+    assert state["stage_number"] == 1
+    assert state["stage_total"] == 1
+    assert state["question"]["id"] == "Q-91030"
+
+    completed = await _answer(client, state, key="single-stage-answer")
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["stage"] == "application"
+
+
+@pytest.mark.asyncio
+async def test_teacher_authored_question_set_reaches_checkpoint_with_its_rubric(
+    client, checkpoint_environment, monkeypatch
+):
+    sessions, _, user = checkpoint_environment
+    question_id = "assessment-chapter2-1"
+    with sessions() as db:
+        db.add(
+            InstructorAction(
+                id=question_id,
+                course_id=7001,
+                actor_user_id=9000,
+                action_type="assessment",
+                entity_id=question_id,
+                payload_json=json.dumps(
+                    {
+                        "status": "approved",
+                        "version": 1,
+                        "assessmentSetId": "set-chapter2",
+                        "topic": "Chapter 2",
+                        "question": "Explain why a registration should be modeled as a relationship.",
+                        "source": "chapter-2.pdf",
+                        "assessmentStage": "explain",
+                        "answerType": "open",
+                        "knowledgeComponentIds": ["relation.transitivity"],
+                        "kcProvisional": False,
+                        "level": "conceptual",
+                        "rubric": ["Identifies both entities", "Explains the relationship"],
+                        "questionDesign": {
+                            "mode": "fixed",
+                            "relation_property": "transitive",
+                            "stages": ["explain"],
+                            "reference_text": "",
+                        },
+                    }
+                ),
+            )
+        )
+        db.commit()
+
+        bank = await adaptive.approved_bank(db, user, Settings(_env_file=None, app_env="test"))
+        authored = next(item for item in bank if item["assessment_id"] == question_id)
+        assert authored["assessment_set_id"] == "set-chapter2"
+        assert [criterion["description"] for criterion in authored["approved_rubric"]] == [
+            "Identifies both entities",
+            "Explains the relationship",
+        ]
+
+    prompts = []
+
+    def grade(messages):
+        human = str(messages[-1].content)
+        prompts.append(human)
+        identifiers = re.findall(r'"criterion_id": "([^"]+)"', human)
+        return SimpleNamespace(
+            content="Feedback\n```json\n"
+            + json.dumps(
+                {
+                    "status": "đã thể hiện được",
+                    "confidence": "Cao",
+                    "evidence_quotes": ["correct explanation"],
+                    "criterion_scores": [
+                        {"criterion_id": identifier, "score": 3, "evidence_quote": "correct explanation"}
+                        for identifier in identifiers
+                    ],
+                }
+            )
+            + "\n```"
+        )
+
+    monkeypatch.setattr("src.agents.workflows.understanding.get_agent_llm", lambda **_: SimpleNamespace(invoke=grade))
+
+    response = await client.post(
+        "/api/v1/do/assessment/start",
+        json={"course_id": 7001, "block_id": "authored-set", "assessment_id": question_id},
+    )
+    assert response.status_code == 200, response.text
+    state = response.json()
+    assert state["assessment_set_id"] == "set-chapter2"
+    assert state["question"]["id"] == question_id
+    answered = await _answer(client, state, key="authored-answer")
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["status"] == "completed"
+    assert prompts and "Identifies both entities" in prompts[0]
+    assert "Explains the relationship" in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_next_question_stays_inside_the_teacher_authored_set(checkpoint_environment):
+    sessions, _, user = checkpoint_environment
+
+    def payload(set_id: str, question: str) -> str:
+        return json.dumps(
+            {
+                "status": "approved",
+                "version": 1,
+                "assessmentSetId": set_id,
+                "topic": "Chapter 2",
+                "question": question,
+                "source": "chapter-2.pdf",
+                "assessmentStage": "explain",
+                "answerType": "open",
+                "knowledgeComponentIds": ["relation.transitivity"],
+                "kcProvisional": False,
+                "level": "conceptual",
+                "rubric": ["Key idea one", "Key idea two"],
+                "questionDesign": {
+                    "mode": "fixed",
+                    "relation_property": "transitive",
+                    "stages": ["explain"],
+                    "reference_text": "",
+                },
+            }
+        )
+
+    with sessions() as db:
+        for identifier, set_id, question in (
+            ("Q-91990", "set-a", "Set A first approved question"),
+            ("Q-91991", "set-a", "Set A second approved question"),
+            ("Q-91992", "set-b", "Set B question that must not be borrowed"),
+        ):
+            db.add(
+                InstructorAction(
+                    id=identifier,
+                    course_id=7001,
+                    actor_user_id=9000,
+                    action_type="assessment",
+                    entity_id=identifier,
+                    payload_json=payload(set_id, question),
+                )
+            )
+        db.commit()
+        bank = await adaptive.approved_bank(db, user, Settings(_env_file=None, app_env="test"))
+
+    state = {
+        "assessment_set_id": "set-a",
+        "checkpoint_seed": "set-test",
+        "stage": "explain",
+        "used": ["Q-91990"],
+        "seen_questions": [],
+        "generated_items": {},
+    }
+    await adaptive.assign(state, bank, "relation.transitivity")
+    assert state["item_id"] == "Q-91991"
+
+
+@pytest.mark.asyncio
 async def test_displayed_question_is_audited_once_even_without_answer(client, checkpoint_environment):
     sessions, _, _ = checkpoint_environment
     _enable_design(checkpoint_environment)
@@ -152,6 +334,10 @@ async def test_displayed_question_is_audited_once_even_without_answer(client, ch
         assert payload["question"] == first["question"]["text"]
         assert payload["parent_assessment_id"] == "Q-91000"
         assert "expected_facts" not in payload and "correct_answer" not in payload
+        # Opening or leaving Self-check is not negative learning evidence. Only
+        # a submitted answer may update learner memory or influence planning.
+        assert db.scalars(select(LearningEvidenceRecord)).all() == []
+        assert db.scalars(select(LearnerMemory)).all() == []
 
 
 @pytest.mark.asyncio
@@ -320,6 +506,8 @@ def _add_explain_variant(environment, variant):
     bank.append({"id": int(identifier[2:]), "prompt": f"explain question {variant}", "question_type": "open"})
     with sessions() as db:
         previous = db.get(InstructorAction, "Q-91010")
+        payload = json.loads(previous.payload_json)
+        payload["question"] = f"explain question {variant}"
         db.add(
             InstructorAction(
                 id=identifier,
@@ -327,7 +515,7 @@ def _add_explain_variant(environment, variant):
                 actor_user_id=9000,
                 action_type="assessment",
                 entity_id=identifier,
-                payload_json=previous.payload_json,
+                payload_json=json.dumps(payload),
             )
         )
         db.commit()
@@ -368,7 +556,7 @@ async def test_verify_before_human_review_preserves_knowledge_and_confirmed_plan
 
 
 @pytest.mark.asyncio
-async def test_two_probe_limit_then_pending_does_not_timeout_autoapprove(client, checkpoint_environment, monkeypatch):
+async def test_two_probe_limit_stays_unknown_without_creating_instructor_work(client, checkpoint_environment, monkeypatch):
     sessions, _, _ = checkpoint_environment
     _add_explain_variant(checkpoint_environment, 2)
     _add_explain_variant(checkpoint_environment, 3)
@@ -377,20 +565,18 @@ async def test_two_probe_limit_then_pending_does_not_timeout_autoapprove(client,
     for index in range(3):
         state = (await _answer(client, state, key=f"uncertain-{index}")).json()
     assert state["verification_count"] == 2
-    assert state["status"] == "review_required"
-    assert state["review"]["status"] == "pending_review"
+    assert state["status"] == "stopped"
+    assert state["review"]["status"] == "abstained"
     assert not state["blocks_planning"]
     instant = adaptive.now_utc() + timedelta(days=14)
     monkeypatch.setattr(adaptive, "now_utc", lambda: instant)
-    assert (await _start(client)).json()["review"]["status"] == "pending_review"
+    assert (await _start(client)).json()["review"]["status"] == "abstained"
     with sessions() as db:
-        cases = db.scalars(select(AgentReviewCase)).all()
-        assert len(cases) == 1 and cases[0].status == "pending"
-        assert json.loads(cases[0].payload_json)["assessment_review"]["reason"] == "verification_limit"
+        assert not db.scalars(select(AgentReviewCase)).all()
 
 
 @pytest.mark.asyncio
-async def test_new_independent_evidence_supersedes_only_own_unresolved_case(
+async def test_new_independent_evidence_after_unknown_signal_needs_no_human_case(
     client, checkpoint_environment, monkeypatch
 ):
     sessions, _, _ = checkpoint_environment
@@ -398,37 +584,16 @@ async def test_new_independent_evidence_supersedes_only_own_unresolved_case(
     original = _low_confidence(monkeypatch)
     state = (await _answer(client, state, key="u1")).json()
     state = (await _answer(client, state, key="u2")).json()
-    case_id = state["review"]["case_id"]
-    assert case_id
-    with sessions() as db:
-        case = db.get(AgentReviewCase, case_id)
-        other = json.loads(case.payload_json)
-        other["assessment_review"]["checkpoint_id"] = "other-checkpoint"
-        db.add(
-            AgentReviewCase(
-                id="other-case",
-                institution_id=case.institution_id,
-                course_id=case.course_id,
-                student_user_id=case.student_user_id,
-                case_type=case.case_type,
-                entity_id="other",
-                payload_json=json.dumps(other),
-            )
-        )
-        db.commit()
+    assert state["review"]["status"] == "abstained"
+    assert state["review"]["case_id"] is None
     _add_explain_variant(checkpoint_environment, 2)
     monkeypatch.setattr("src.agents.workflows.understanding.get_agent_llm", lambda **_: original)
     resumed = (await _start(client, restart=True)).json()
     result = (await _answer(client, resumed, key="independent")).json()
     assert result["stage"] == "why"
-    assert result["review"]["resolved_case_ids"] == [case_id]
+    assert result["review"]["status"] == "accepted"
     with sessions() as db:
-        case = db.get(AgentReviewCase, case_id)
-        assert case.status == "superseded"
-        payload = json.loads(case.payload_json)
-        assert payload["resolution"]["evidence_id"] in result["last_result"]["evidence_ids"]
-        assert payload["assessment_result"]["confidence"] == "Thấp"
-        assert db.get(AgentReviewCase, "other-case").status == "pending"
+        assert not db.scalars(select(AgentReviewCase)).all()
 
 
 @pytest.mark.asyncio
@@ -497,7 +662,7 @@ async def test_uncertain_delayed_probe_does_not_claim_retention(client, checkpoi
     state = (await _start(client, probe_id=probe_id)).json()
     _low_confidence(monkeypatch)
     state = (await _answer(client, state, key="uncertain-retention")).json()
-    assert state["review"]["status"] == "pending_review"
+    assert state["review"]["status"] == "abstained"
     assert state["last_result"]["provisional"]
     with sessions() as db:
         assert db.get(DelayedAssessmentProbe, probe_id).status == "pending"
@@ -505,7 +670,7 @@ async def test_uncertain_delayed_probe_does_not_claim_retention(client, checkpoi
 
 
 @pytest.mark.asyncio
-async def test_same_question_in_different_blocks_does_not_overwrite_pending_case(
+async def test_same_question_in_different_blocks_creates_no_student_answer_review_case(
     client, checkpoint_environment, monkeypatch
 ):
     sessions, _, _ = checkpoint_environment
@@ -515,14 +680,10 @@ async def test_same_question_in_different_blocks_does_not_overwrite_pending_case
     for index in range(2):
         first = (await _answer(client, first, key=f"first-{index}")).json()
         second = (await _answer(client, second, key=f"second-{index}")).json()
-    assert first["review"]["case_id"] != second["review"]["case_id"]
+    assert first["session_id"] != second["session_id"]
+    assert first["review"]["case_id"] is None and second["review"]["case_id"] is None
     with sessions() as db:
-        cases = db.scalars(select(AgentReviewCase)).all()
-        assert len(cases) == 2
-        assert {json.loads(case.payload_json)["assessment_review"]["checkpoint_id"] for case in cases} == {
-            first["session_id"],
-            second["session_id"],
-        }
+        assert not db.scalars(select(AgentReviewCase)).all()
 
 
 @pytest.mark.asyncio
@@ -588,14 +749,70 @@ async def test_wrong_reasoning_cannot_pass_even_if_model_dimensions_claim_pass(c
 
 
 @pytest.mark.asyncio
-async def test_missing_approved_item_reports_coverage_gap(client, checkpoint_environment):
+async def test_grounded_bubble_sort_misconception_is_saved_for_plan_when_scores_are_malformed(
+    client, checkpoint_environment, monkeypatch
+):
+    sessions, _, _ = checkpoint_environment
+    state = (await _answer(client, (await _start(client)).json())).json()
+    assert state["stage"] == "explain"
+    answer = (
+        "Em chọn bubble sort nhưng không cần cờ swapped vì dãy gần được sắp xếp thì thuật toán tự dừng. "
+        "Bubble sort luôn có độ phức tạp O(n) và dùng O(n) bộ nhớ để lưu các phần tử đã đổi chỗ."
+    )
+
+    def evaluate(_messages):
+        return SimpleNamespace(
+            content="Feedback\n```json\n"
+            + json.dumps(
+                {
+                    "status": "còn nhầm lẫn",
+                    "confidence": "Cao",
+                    "evidence_quotes": ["Bubble sort luôn có độ phức tạp O(n)"],
+                    "criterion_scores": [
+                        {
+                            "criterion_id": "provider-used-wrong-id",
+                            "score": 1,
+                            "evidence_quote": "Bubble sort luôn có độ phức tạp O(n)",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+            + "\n```"
+        )
+
+    monkeypatch.setattr(
+        "src.agents.workflows.understanding.get_agent_llm",
+        lambda **_kwargs: SimpleNamespace(invoke=evaluate),
+    )
+    response = await _answer(client, state, answer, "bubble-misconception")
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["status"] == "needs_support"
+    assert result["last_result"]["status"] == "còn nhầm lẫn"
+    assert result["last_result"]["confidence"] == "high"
+    assert result["review"]["status"] == "accepted"
+
+    with sessions() as db:
+        rows = db.scalars(select(LearningEvidenceRecord).order_by(LearningEvidenceRecord.created_at)).all()
+        evidence = json.loads(rows[-1].payload_json)
+        assert evidence["valid"] is True
+        assert evidence["dimensions"]["conceptual"] == "failed"
+        assert evidence["can_record_observation"] is True
+
+
+@pytest.mark.asyncio
+async def test_missing_approved_stage_is_not_advertised_as_an_empty_step(client, checkpoint_environment):
     sessions, _, _ = checkpoint_environment
     with sessions() as db:
         db.query(InstructorAction).filter(InstructorAction.entity_id.in_(("Q-91010", "Q-91011"))).delete()
         db.commit()
     state = (await _answer(client, (await _start(client)).json())).json()
-    assert state["status"] == "coverage_gap"
-    assert state["coverage_gap"] == "explain"
+    assert state["status"] == "active"
+    assert state["stage"] == "why"
+    assert state["stage_number"] == 2
+    assert state["stage_total"] == 4
+    assert state["question"] is not None
     assert state["last_result"]["demonstrated_level"] == "recognition"
 
 

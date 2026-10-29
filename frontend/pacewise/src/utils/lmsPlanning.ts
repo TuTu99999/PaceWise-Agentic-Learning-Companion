@@ -1,5 +1,5 @@
 import type { LMSCalendarItem, LMSCourseData, Plan, PlanImpact, Task, TimeBlock, UnavailableSlot, Weekday } from '../types';
-import { DEMO_TODAY, diffDays, durationMin, toMin, weekdayOf } from './time';
+import { durationMin, toMin, weekdayOf } from './time';
 import { blockTimestamp } from './calendarEditing';
 import { taskDeadlineTimestamp } from './planningScope';
 
@@ -39,11 +39,16 @@ export function uniqueCalendarItems(courseData: Record<string, LMSCourseData>): 
 }
 
 function isFixedCommitment(item: LMSCalendarItem) {
-  return item.type === 'event' && Boolean(item.ends_at) && FIXED_EVENT_KINDS.has(item.event_kind);
+  return item.type === 'event'
+    && Boolean(item.ends_at)
+    && (FIXED_EVENT_KINDS.has(item.event_kind) || item.event_kind.startsWith('teaching_'));
 }
 
-export function lmsUnavailableSlots(courseData: Record<string, LMSCourseData>): UnavailableSlot[] {
-  return uniqueCalendarItems(courseData)
+export function lmsUnavailableSlots(
+  courseData: Record<string, LMSCourseData>,
+  range?: { from: string; to: string },
+): UnavailableSlot[] {
+  const slots = uniqueCalendarItems(courseData)
     .filter(isFixedCommitment)
     .map((item) => {
       const start = localParts(item.starts_at);
@@ -59,7 +64,13 @@ export function lmsUnavailableSlots(courseData: Record<string, LMSCourseData>): 
         readOnly: true,
       };
     })
-    .filter((slot) => diffDays(DEMO_TODAY, slot.date!) >= 0 && diffDays(DEMO_TODAY, slot.date!) <= 13);
+    .filter((slot) => !range || (slot.date! >= range.from && slot.date! <= range.to));
+  const unique = new Map<string, UnavailableSlot>();
+  slots.forEach((slot) => {
+    const identity = [slot.date, slot.start, slot.end, slot.label].join('|').toLocaleLowerCase();
+    if (!unique.has(identity)) unique.set(identity, slot);
+  });
+  return [...unique.values()];
 }
 
 export function slotOverlapsBlock(block: TimeBlock, slot: UnavailableSlot) {
@@ -93,11 +104,27 @@ export function detectLmsPlanImpacts(
   previousCourseData: Record<string, LMSCourseData>,
   currentCourseData: Record<string, LMSCourseData>,
 ): PlanImpact[] {
-  if (!plan) return [];
   const detectedAt = new Date().toISOString();
   const impacts: PlanImpact[] = [];
+  const planBlocks = plan?.blocks ?? [];
   const oldTasks = new Map(previousTasks.map((task) => [task.id, task]));
   const nextTasks = new Map(currentTasks.map((task) => [task.id, task]));
+  const previousCourseIds = new Set(Object.keys(previousCourseData));
+
+  Object.entries(currentCourseData).forEach(([key, course]) => {
+    if (previousCourseIds.has(key)) return;
+    const courseId = String(course.courseId || key);
+    impacts.push({
+      id: `course-added:${courseId}`,
+      kind: 'course_added',
+      title: 'Bạn được thêm vào môn học mới',
+      message: 'Môn học mới đã được thêm vào phạm vi học. Bấm AI phân tích lại để đưa lịch học và nhiệm vụ của môn vào kế hoạch; lịch hiện tại chỉ đổi sau khi bạn xác nhận.',
+      courseId,
+      deficitMin: 0,
+      affectedBlockIds: [],
+      detectedAt,
+    });
+  });
 
   currentTasks.forEach((task) => {
     const old = oldTasks.get(task.id);
@@ -105,7 +132,7 @@ export function detectLmsPlanImpacts(
       impacts.push({ id: `assignment-added:${task.id}:${task.deadline}`, kind: 'assignment_added', title: 'Có deadline mới', message: `${task.title} vừa được thêm và cần được đánh giá cùng kế hoạch hiện tại.`, courseId: task.courseId, taskId: task.id, deadline: task.deadline, deficitMin: Math.max(0, task.estimateMin - task.loggedMin), affectedBlockIds: [], detectedAt });
     } else if (taskDeadlineTimestamp(old) !== taskDeadlineTimestamp(task)) {
       const earlier = taskDeadlineTimestamp(task) < taskDeadlineTimestamp(old);
-      const affected = plan.blocks.filter((block) => block.taskId === task.id && blockTimestamp(block.date, block.end) > taskDeadlineTimestamp(task));
+      const affected = planBlocks.filter((block) => block.taskId === task.id && blockTimestamp(block.date, block.end) > taskDeadlineTimestamp(task));
       const deadlineLabel = (value: Task) => value.dueAt
         ? new Date(taskDeadlineTimestamp(value)).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }) : value.deadline;
       impacts.push({ id: `deadline:${task.id}:${task.dueAt ?? task.deadline}`, kind: earlier ? 'deadline_earlier' : 'deadline_later', title: earlier ? 'Deadline được dời sớm' : 'Deadline được gia hạn', message: earlier ? `${task.title} chuyển từ ${deadlineLabel(old)} sang ${deadlineLabel(task)}. ${affected.length} ca tự học cần được kiểm tra lại.` : `${task.title} chuyển từ ${deadlineLabel(old)} sang ${deadlineLabel(task)}; kế hoạch có thể có thêm thời gian dự phòng.`, courseId: task.courseId, taskId: task.id, deadline: task.deadline, deficitMin: affected.reduce((sum, block) => sum + durationMin(block.start, block.end), 0), affectedBlockIds: affected.map((block) => block.id), detectedAt });
@@ -114,16 +141,28 @@ export function detectLmsPlanImpacts(
 
   previousTasks.forEach((task) => {
     if (nextTasks.has(task.id)) return;
-    const affected = plan.blocks.filter((block) => block.taskId === task.id);
+    const affected = planBlocks.filter((block) => block.taskId === task.id);
     impacts.push({ id: `assignment-removed:${task.id}`, kind: 'assignment_removed', title: 'Assignment đã bị xóa', message: `${task.title} không còn trên LMS. ${affected.length} ca tự học chỉ được gỡ sau khi bạn xác nhận.`, courseId: task.courseId, taskId: task.id, deadline: task.deadline, deficitMin: 0, affectedBlockIds: affected.map((block) => block.id), detectedAt });
   });
 
   const busyChanges = changedBusySlots(previousCourseData, currentCourseData);
   busyChanges.addedOrChanged.forEach((slot) => {
-    const affected = plan.blocks.filter((block) => slotOverlapsBlock(block, slot));
+    const affected = planBlocks.filter((block) => slotOverlapsBlock(block, slot));
+    if (affected.length === 0) {
+      impacts.push({
+        id: `schedule-changed:${slot.id}:${slot.date}:${slot.start}:${slot.end}`,
+        kind: 'schedule_changed',
+        constraintId: slot.id,
+        title: 'Giảng viên đã thay đổi lịch học',
+        message: `${slot.label} chuyển sang ${slot.date} lúc ${slot.start}–${slot.end}. Lịch mới chưa trùng ca tự học đã lưu, nhưng bạn nên chạy AI phân tích lại để cập nhật toàn bộ kế hoạch.`,
+        deficitMin: 0,
+        affectedBlockIds: [],
+        detectedAt,
+      });
+    }
     affected.forEach((block) => {
       const task = nextTasks.get(block.taskId) ?? oldTasks.get(block.taskId);
-      impacts.push({ id: `schedule-conflict:${slot.id}:${block.id}:${slot.date}:${slot.start}`, kind: 'schedule_conflict', constraintId: slot.id, title: 'Lịch LMS trùng ca tự học', message: `${slot.label} (${slot.start}–${slot.end}) trùng một phiên học đã lưu. PaceWise sẽ chỉ đổi lịch sau khi bạn xác nhận bản cập nhật.`, courseId: task?.courseId, taskId: block.taskId, deadline: task?.deadline, deficitMin: durationMin(block.start, block.end), affectedBlockIds: [block.id], detectedAt });
+      impacts.push({ id: `schedule-conflict:${slot.id}:${block.id}:${slot.date}:${slot.start}`, kind: 'schedule_conflict', constraintId: slot.id, title: 'Giảng viên đổi lịch và gây trùng ca tự học', message: `${slot.label} (${slot.start}–${slot.end}) trùng một phiên học đã lưu. Bấm AI phân tích lại; PaceWise chỉ đổi lịch sau khi bạn xác nhận bản cập nhật.`, courseId: task?.courseId, taskId: block.taskId, deadline: task?.deadline, deficitMin: durationMin(block.start, block.end), affectedBlockIds: [block.id], detectedAt });
     });
   });
   busyChanges.removedOrShortened.forEach((slot) => {

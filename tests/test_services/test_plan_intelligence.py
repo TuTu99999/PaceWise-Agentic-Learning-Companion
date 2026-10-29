@@ -121,6 +121,68 @@ def test_rubric_evidence_routes_to_deterministic_decomposition_without_seven_sig
     assert result["route"] == "template"
 
 
+def test_multi_question_brief_routes_to_ai_and_fallback_keeps_every_question_with_fixed_total():
+    assignment = _assignment(
+        rubric=None,
+        planning_evidence_type="assignment_brief",
+        assignment_parts=[
+            {
+                "partId": f"S2-P{index}",
+                "label": f"Câu {index}",
+                "content": content,
+                "sourceRef": f"file:9#exercise=2&part=S2-P{index}",
+            }
+            for index, content in enumerate(
+                [
+                    "Thiết kế lược đồ quan hệ và giải thích khóa.",
+                    "Viết truy vấn JOIN lấy dữ liệu theo yêu cầu.",
+                    "Kiểm thử truy vấn với dữ liệu biên.",
+                ],
+                start=1,
+            )
+        ],
+    )
+
+    assert assignment_structure(assignment)["route"] == "llm"
+    milestones = build_template_milestones(assignment, target_minutes=120)
+
+    assert sum(item["estimated_minutes"] for item in milestones) == 120
+    assert {
+        part_id
+        for item in milestones
+        for part_id in item["assignment_part_ids"]
+    } == {"S2-P1", "S2-P2", "S2-P3"}
+    assert all(item["decomposition_source"] == "assignment_question_evidence" for item in milestones)
+    assert milestones[1]["depends_on"] == [milestones[0]["milestone_id"]]
+
+
+def test_large_assignment_group_uses_compact_label_summary_without_losing_parts():
+    labels = [
+        "Câu 1", "Câu 2", "Câu 3", "Câu 4", "Câu 5",
+        "Yêu cầu 1", "Yêu cầu 2", "Yêu cầu 3", "Thành phần 1", "Thành phần 2",
+    ]
+    assignment = _assignment(
+        rubric=None,
+        planning_evidence_type="assignment_brief",
+        assignment_parts=[
+            {
+                "partId": f"part-{index}",
+                "label": label,
+                "content": f"Nội dung cần làm cho {label}",
+                "sourceRef": f"file:9#part={index}",
+            }
+            for index, label in enumerate(labels, start=1)
+        ],
+    )
+
+    milestones = build_template_milestones(assignment, target_minutes=30)
+
+    assert len(milestones) == 1
+    assert milestones[0]["title"].startswith("Làm 5 câu · 3 yêu cầu · 2 thành phần —")
+    assert "; Câu" not in milestones[0]["title"]
+    assert milestones[0]["assignment_part_ids"] == [f"part-{index}" for index in range(1, 11)]
+
+
 def test_enrichment_maps_rubric_and_kc_and_adds_low_mastery_review():
     enriched, report = enrich_task_milestones(
         task_id="math:3",

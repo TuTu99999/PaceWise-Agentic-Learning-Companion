@@ -19,7 +19,7 @@ describe('course/activity rhythm student choice', () => {
     expect(dispatch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Lưu nhịp riêng' }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'UPSERT_ACTIVITY_RHYTHM', rhythm: { courseId: 1, activityType: 'concept', sessionMinutes: 30, breakMinutes: 5 } });
-    expect(screen.getByRole('status')).toHaveTextContent('Lịch hiện tại không đổi');
+    expect(screen.getByRole('status')).toHaveTextContent('Đã lưu nhịp riêng');
   });
   it('falls back independently for another course or activity and validates bounds', () => {
     render(<ActivityRhythmSettings />);

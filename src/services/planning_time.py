@@ -21,6 +21,39 @@ def partition_open_assignments(assignments: list[dict], *, now: datetime,
     return active, expired
 
 
+def assignment_available_at(assignment: dict, timezone_name: str) -> datetime | None:
+    """Return the strongest server-owned earliest placement/start boundary.
+
+    ``unlock_at`` is the LMS availability boundary. ``learning_available_at``
+    is derived from an explicitly linked class/material. The assignment remains
+    visible to future planning, but no Do block may be placed or started before
+    this boundary.
+    """
+
+    values = []
+    for key in ("unlock_at", "unlockAt", "learning_available_at", "learningAvailableAt"):
+        parsed = instant_at(assignment.get(key), timezone_name)
+        if parsed is not None:
+            values.append(parsed)
+    return max(values, default=None)
+
+
+def instant_at(value: object, timezone_name: str) -> datetime | None:
+    """Parse an optional LMS instant; date-only availability starts that day."""
+
+    zone = ZoneInfo(timezone_name)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10:
+            return datetime.combine(date.fromisoformat(text), time.min, zone)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return (parsed.replace(tzinfo=zone) if parsed.tzinfo is None else parsed).astimezone(zone)
+    except ValueError:
+        return None
+
+
 def deadline_at(value: object, fallback: date, timezone_name: str) -> datetime:
     zone = ZoneInfo(timezone_name)
     text = str(value or "").strip()

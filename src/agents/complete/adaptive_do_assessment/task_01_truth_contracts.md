@@ -13,4 +13,3 @@
 - `tests/test_services/test_learning_evidence.py`
 - Full backend: `303 passed`.
 - Assessment offline eval: closed accuracy `1.0`, false mastery acceptance `0.0`.
-

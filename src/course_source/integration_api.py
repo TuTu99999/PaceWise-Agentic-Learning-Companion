@@ -10,14 +10,13 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from src.config import Settings, get_settings
 from src.course_source.dates import as_utc
 from src.course_source.db import get_db
 from src.course_source.deadline_snapshot import course_due_overrides
 from src.course_source.learning_api import (
     assignment_extension_payload,
     can_access_resource,
-    module_extension_payload,
-    resource_extension_payload,
     submission_history_payload,
 )
 from src.course_source.models import (
@@ -41,12 +40,18 @@ from src.course_source.models import (
     LearningActivity,
     LearningEvidence,
     ModuleItem,
+    ModuleItemProgress,
+    ModulePolicy,
+    ModulePrerequisite,
+    ModuleRequirement,
     OutcomeAlignment,
     PlannerItem,
     QuizAttempt,
     QuizQuestion,
     Resource,
+    ResourceAccess,
     ResourceFolder,
+    ResourceVersion,
     SectionMembership,
     Submission,
     SubmissionAttempt,
@@ -59,7 +64,6 @@ from src.course_source.pacewise_contracts import (
     planner_payload,
     submission_contract,
     submission_rubric,
-    visible_module_item,
 )
 from src.course_source.telemetry import record_change
 
@@ -167,7 +171,13 @@ def courses(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> list[dict]:
+    if user_id is not None and settings.google_signup_auto_enroll_courses:
+        from src.course_source.membership import auto_enroll_google_student
+
+        auto_enroll_google_student(db, user_id, settings.google_signup_auto_enroll_teacher_email)
+        db.commit()
     query = select(Course).order_by(Course.id).offset(offset).limit(limit)
     if user_id is not None:
         query = (
@@ -357,15 +367,98 @@ def modules(
 ) -> list[dict]:
     require_course(db, course_id)
     actor = course_actor(db, course_id, user_id)
-    result = []
-    for module in db.scalars(
+    student_view = bool(actor and actor.role != "instructor")
+    module_rows = db.scalars(
         select(CourseModule).where(CourseModule.course_id == course_id).order_by(CourseModule.position)
+    ).all()
+    if student_view:
+        module_rows = [item for item in module_rows if item.published]
+    module_ids = [item.id for item in module_rows]
+    if not module_ids:
+        return []
+
+    item_rows = db.scalars(
+        select(ModuleItem)
+        .where(ModuleItem.module_id.in_(module_ids))
+        .order_by(ModuleItem.module_id, ModuleItem.position)
+    ).all()
+    items_by_module: dict[int, list[ModuleItem]] = {module_id: [] for module_id in module_ids}
+    for item in item_rows:
+        items_by_module[item.module_id].append(item)
+
+    policies = {
+        item.module_id: item
+        for item in db.scalars(select(ModulePolicy).where(ModulePolicy.module_id.in_(module_ids))).all()
+    }
+    prerequisites_by_module: dict[int, list[int]] = {module_id: [] for module_id in module_ids}
+    for item in db.scalars(
+        select(ModulePrerequisite)
+        .where(ModulePrerequisite.module_id.in_(module_ids))
+        .order_by(ModulePrerequisite.id)
     ).all():
-        if actor and actor.role != "instructor" and not module.published:
-            continue
-        items = db.scalars(
-            select(ModuleItem).where(ModuleItem.module_id == module.id).order_by(ModuleItem.position)
-        ).all()
+        prerequisites_by_module[item.module_id].append(item.prerequisite_module_id)
+
+    requirements = db.scalars(
+        select(ModuleRequirement)
+        .join(ModuleItem, ModuleItem.id == ModuleRequirement.module_item_id)
+        .where(ModuleItem.module_id.in_(module_ids))
+        .order_by(ModuleRequirement.id)
+    ).all()
+    module_id_by_item = {item.id: item.module_id for item in item_rows}
+    requirements_by_module: dict[int, list[ModuleRequirement]] = {module_id: [] for module_id in module_ids}
+    for requirement in requirements:
+        module_id = module_id_by_item.get(requirement.module_item_id)
+        if module_id is not None:
+            requirements_by_module[module_id].append(requirement)
+    progress_by_item: dict[int, ModuleItemProgress] = {}
+    if user_id is not None and requirements:
+        requirement_item_ids = [item.module_item_id for item in requirements]
+        progress_by_item = {
+            item.module_item_id: item
+            for item in db.scalars(
+                select(ModuleItemProgress).where(
+                    ModuleItemProgress.user_id == user_id,
+                    ModuleItemProgress.module_item_id.in_(requirement_item_ids),
+                )
+            ).all()
+        }
+
+    visible_target_ids: dict[str, set[int]] = {}
+    if student_view:
+        visible_target_ids["assignment"] = set(
+            db.scalars(
+                select(Assignment.id).where(Assignment.course_id == course_id, Assignment.published.is_(True))
+            ).all()
+        )
+        visible_target_ids["content"] = set(
+            db.scalars(
+                select(CourseContent.id).where(
+                    CourseContent.course_id == course_id,
+                    CourseContent.published.is_(True),
+                )
+            ).all()
+        )
+        resources = db.scalars(select(Resource).where(Resource.course_id == course_id)).all()
+        visible_target_ids["resource"] = _accessible_resource_ids(db, course_id, user_id, actor, resources)
+
+    def visible(item: ModuleItem) -> bool:
+        if not student_view:
+            return True
+        if not item.published:
+            return False
+        kind = item.item_type.lower()
+        if item.content_id is None:
+            return kind in {"external_url", "externalurl", "subheader"}
+        if kind in {"resource", "file"}:
+            return item.content_id in visible_target_ids["resource"]
+        if kind == "assignment":
+            return item.content_id in visible_target_ids["assignment"]
+        return item.content_id in visible_target_ids["content"]
+
+    result = []
+    for module in module_rows:
+        policy = policies.get(module.id)
+        module_requirements = requirements_by_module[module.id]
         result.append(
             {
                 "id": module.id,
@@ -382,10 +475,23 @@ def modules(
                         "position": item.position,
                         "published": item.published,
                     }
-                    for item in items
-                    if not actor or actor.role == "instructor" or visible_module_item(db, item, course_id, user_id)
+                    for item in items_by_module[module.id]
+                    if visible(item)
                 ],
-                **module_extension_payload(db, module, user_id),
+                "sequential_progress": policy.sequential_progress if policy else False,
+                "prerequisite_module_ids": prerequisites_by_module[module.id],
+                "requirements": [
+                    {
+                        "id": requirement.id,
+                        "module_item_id": requirement.module_item_id,
+                        "requirement_type": requirement.requirement_type,
+                        "min_score": requirement.min_score,
+                        "status": progress_by_item.get(requirement.module_item_id).status
+                        if requirement.module_item_id in progress_by_item
+                        else "not_started",
+                    }
+                    for requirement in module_requirements
+                ],
             }
         )
     return result
@@ -414,6 +520,45 @@ def content(course_id: int, kind: str | None = None, db: Session = Depends(get_d
     ]
 
 
+def _accessible_resource_ids(
+    db: Session,
+    course_id: int,
+    user_id: int | None,
+    actor,
+    resources: list[Resource],
+) -> set[int]:
+    """Resolve student resource ACLs in bounded bulk queries."""
+    resource_ids = {item.id for item in resources if item.course_id == course_id}
+    if user_id is None or (actor and actor.role == "instructor") or not resource_ids:
+        return resource_ids
+    access_by_resource: dict[int, list[ResourceAccess]] = {resource_id: [] for resource_id in resource_ids}
+    for access in db.scalars(
+        select(ResourceAccess).where(ResourceAccess.resource_id.in_(resource_ids))
+    ).all():
+        access_by_resource[access.resource_id].append(access)
+    section_ids = set(
+        db.scalars(select(SectionMembership.section_id).where(SectionMembership.user_id == user_id)).all()
+    )
+    group_ids = set(
+        db.scalars(select(GroupMembership.group_id).where(GroupMembership.user_id == user_id)).all()
+    )
+    return {
+        resource_id
+        for resource_id, scopes in access_by_resource.items()
+        if not scopes
+        or any(
+            access.permission == "read"
+            and (
+                (access.scope_type == "course" and access.scope_id == course_id)
+                or (access.scope_type == "user" and access.scope_id == user_id)
+                or (access.scope_type == "section" and access.scope_id in section_ids)
+                or (access.scope_type == "group" and access.scope_id in group_ids)
+            )
+            for access in scopes
+        )
+    }
+
+
 @service_router.get("/courses/{course_id}/files", dependencies=[Depends(require_service_key)])
 def files(
     course_id: int,
@@ -421,19 +566,88 @@ def files(
     db: Session = Depends(get_db),
 ) -> list[dict]:
     require_course(db, course_id)
-    course_actor(db, course_id, user_id)
+    actor = course_actor(db, course_id, user_id)
     resources = db.scalars(
         select(Resource).where(Resource.course_id == course_id).order_by(Resource.id)
     ).all()
+    resource_ids = [item.id for item in resources]
     if user_id is not None:
-        resources = [item for item in resources if can_access_resource(db, item, user_id)]
+        allowed = _accessible_resource_ids(db, course_id, user_id, actor, resources)
+        resources = [item for item in resources if item.id in allowed]
+    if not resources:
+        return []
+
+    access_by_resource: dict[int, list[ResourceAccess]] = {item.id: [] for item in resources}
+    for access in db.scalars(
+        select(ResourceAccess)
+        .where(ResourceAccess.resource_id.in_(resource_ids))
+        .order_by(ResourceAccess.id)
+    ).all():
+        if access.resource_id in access_by_resource:
+            access_by_resource[access.resource_id].append(access)
+
+    latest_by_resource: dict[int, ResourceVersion] = {}
+    for version in db.scalars(
+        select(ResourceVersion)
+        .where(ResourceVersion.resource_id.in_(resource_ids))
+        .order_by(ResourceVersion.resource_id, ResourceVersion.version.desc())
+    ).all():
+        latest_by_resource.setdefault(version.resource_id, version)
+    folder_ids = {
+        version.folder_id for version in latest_by_resource.values() if version.folder_id is not None
+    }
+    folders = {
+        folder.id: folder
+        for folder in db.scalars(select(ResourceFolder).where(ResourceFolder.id.in_(folder_ids))).all()
+    } if folder_ids else {}
+    module_by_resource = {
+        int(content_id): name
+        for content_id, name in db.execute(
+            select(ModuleItem.content_id, CourseModule.name)
+            .join(CourseModule, CourseModule.id == ModuleItem.module_id)
+            .where(
+                CourseModule.course_id == course_id,
+                ModuleItem.item_type == "resource",
+                ModuleItem.content_id.in_(resource_ids),
+            )
+            .order_by(CourseModule.position, CourseModule.id)
+        ).all()
+        if content_id is not None
+    }
+    course = db.get(Course, course_id)
+
     return [
         {
             "id": item.id,
             "title": item.title,
             "kind": item.kind,
             "source_url": item.source_url,
-            **resource_extension_payload(db, item),
+            "course_code": course.code if course else str(course_id),
+            "course_name": course.name if course else "",
+            "planning_chapter": module_by_resource.get(item.id, ""),
+            "folder": (
+                {"id": folders[latest_by_resource[item.id].folder_id].id,
+                 "name": folders[latest_by_resource[item.id].folder_id].name}
+                if item.id in latest_by_resource
+                and latest_by_resource[item.id].folder_id in folders
+                else None
+            ),
+            "latest_version": (
+                {
+                    "id": latest_by_resource[item.id].id,
+                    "version": latest_by_resource[item.id].version,
+                    "checksum_sha256": latest_by_resource[item.id].checksum_sha256,
+                    "size_bytes": latest_by_resource[item.id].size_bytes,
+                    "content_type": latest_by_resource[item.id].content_type,
+                    "created_at": _iso(latest_by_resource[item.id].created_at),
+                }
+                if item.id in latest_by_resource
+                else None
+            ),
+            "access_scope": [
+                {"type": access.scope_type, "id": access.scope_id, "permission": access.permission}
+                for access in access_by_resource[item.id]
+            ],
         }
         for item in resources
     ]
@@ -617,6 +831,8 @@ def user_calendar(user_id: int, db: Session = Depends(get_db)) -> list[dict]:
                 else None
             ),
             "event_kind": item.event_kind,
+            "resource_ids": lesson_metadata(item).get("resource_ids", []),
+            "attendance_status": item.attendance_status,
             "editable": not (
                 item.description.startswith("pacewise-2026-v1;")
                 or item.description.startswith("course-activity-v1;")

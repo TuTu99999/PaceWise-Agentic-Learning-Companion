@@ -46,6 +46,15 @@ logger = logging.getLogger("pacewise.agents.qa")
 _stream_sink: ContextVar[Callable[[str], None] | None] = ContextVar("qa_stream_sink", default=None)
 
 
+def _response_locale(state: LearningGraphState) -> str:
+    """Read only the API-validated locale stored in the trusted request envelope."""
+    return "en" if (state.get("request") or {}).get("locale") == "en" else "vi"
+
+
+def _localized(state: LearningGraphState, vietnamese: str, english: str) -> str:
+    return english if _response_locale(state) == "en" else vietnamese
+
+
 @contextmanager
 def stream_qa_tokens(sink: Callable[[str], None]) -> Iterator[None]:
     """Attach a request-local token sink without placing callbacks in graph state."""
@@ -273,7 +282,11 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
     if guardrail.get("is_injection_attempt"):
         return {
             "current_node": "qa",
-            "response": "Mình không thể làm theo chỉ dẫn nhằm thay đổi quy tắc hệ thống hoặc tiết lộ thông tin nội bộ. Bạn có thể đặt câu hỏi về nội dung môn học.",
+            "response": _localized(
+                state,
+                "Mình không thể làm theo chỉ dẫn nhằm thay đổi quy tắc hệ thống hoặc tiết lộ thông tin nội bộ. Bạn có thể đặt câu hỏi về nội dung môn học.",
+                "I can't follow instructions that try to change the system rules or reveal internal information. You can ask a question about the selected course.",
+            ),
             "analysis": "blocked_prompt_injection",
             "mode": "out_of_scope",
             "security_flags": guardrail,
@@ -284,7 +297,11 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
     if _is_social_message(query):
         return {
             "current_node": "qa",
-            "response": "Chào bạn! Mình sẵn sàng hỗ trợ nội dung của môn đang chọn. Bạn muốn hỏi phần nào?",
+            "response": _localized(
+                state,
+                "Chào bạn! Mình sẵn sàng hỗ trợ nội dung của môn đang chọn. Bạn muốn hỏi phần nào?",
+                "Hello! I'm ready to help with the selected course. What would you like to learn about?",
+            ),
             "analysis": "social_conversation",
             "mode": "conversation",
             "security_flags": guardrail,
@@ -301,9 +318,10 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
         ).strip()
         return {
             "current_node": "qa",
-            "response": (
-                f"Câu này không thuộc nội dung môn {course_code}, nên mình không dùng học liệu của môn "
-                "để trả lời. Bạn hãy hỏi về khái niệm, bài học hoặc tài liệu của môn đang chọn."
+            "response": _localized(
+                state,
+                f"Câu này không thuộc nội dung môn {course_code}, nên mình không dùng học liệu của môn để trả lời. Bạn hãy hỏi về khái niệm, bài học hoặc tài liệu của môn đang chọn.",
+                f"This question is outside the scope of {course_code}, so I can't use that course's materials to answer it. Please ask about a concept, lesson, or resource from the selected course.",
             ),
             "analysis": "out_of_course_scope",
             "mode": "out_of_scope",
@@ -321,13 +339,10 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
             reason=dispute_reason,
             student_note=query,
         )
-        response_text = (
-            f"### 📋 TIẾP NHẬN PHẢN HỒI KHIẾU NẠI TRÍCH DẪN\n\n"
-            f"Chào bạn, Study Support Agent đã ghi nhận ý kiến đóng góp của bạn về trích dẫn **{disputed_citation}**.\n\n"
-            f"- **Mã khiếu nại:** `{dispute_res['dispute']['dispute_id']}`\n"
-            f"- **Lý do phản ánh:** {dispute_reason}\n"
-            f"- **Trạng thái:** Đã đánh dấu cờ `flagged_for_review` và chuyển thông tin tới Giảng viên phụ trách môn học để đối soát phiên bản giáo trình.\n\n"
-            f"Trong thời gian này, mình sẽ tạm thời không sử dụng đoạn trích dẫn này làm căn cứ chính. Nếu bạn có câu hỏi học thuật khác, cứ gửi cho mình nhé!"
+        response_text = _localized(
+            state,
+            f"### 📋 TIẾP NHẬN PHẢN HỒI KHIẾU NẠI TRÍCH DẪN\n\nChào bạn, Study Support Agent đã ghi nhận ý kiến đóng góp của bạn về trích dẫn **{disputed_citation}**.\n\n- **Mã khiếu nại:** `{dispute_res['dispute']['dispute_id']}`\n- **Lý do phản ánh:** {dispute_reason}\n- **Trạng thái:** Đã đánh dấu cờ `flagged_for_review` và chuyển thông tin tới Giảng viên phụ trách môn học để đối soát phiên bản giáo trình.\n\nTrong thời gian này, mình sẽ tạm thời không sử dụng đoạn trích dẫn này làm căn cứ chính. Nếu bạn có câu hỏi học thuật khác, cứ gửi cho mình nhé!",
+            f"### 📋 CITATION REPORT RECEIVED\n\nThe Study Support Agent has recorded your feedback about **{disputed_citation}**.\n\n- **Report ID:** `{dispute_res['dispute']['dispute_id']}`\n- **Reason:** {dispute_reason}\n- **Status:** Marked as `flagged_for_review` and sent to the course instructor for verification against the current course material.\n\nI will not use this excerpt as primary evidence while it is under review. You can continue with another course-related question.",
         )
         return {
             "current_node": "qa",
@@ -344,10 +359,10 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
     if is_cheating:
         return {
             "current_node": "qa",
-            "response": (
-                "Mình không thể tạo đáp án hoặc bài hoàn chỉnh để nộp. "
-                "Hãy gửi phần bạn đã thử và nói rõ bước đang vướng; mình sẽ kiểm tra lập luận, "
-                "giải thích khái niệm liên quan và gợi ý bước tiếp theo bằng một ví dụ tương tự."
+            "response": _localized(
+                state,
+                "Mình không thể tạo đáp án hoặc bài hoàn chỉnh để nộp. Hãy gửi phần bạn đã thử và nói rõ bước đang vướng; mình sẽ kiểm tra lập luận, giải thích khái niệm liên quan và gợi ý bước tiếp theo bằng một ví dụ tương tự.",
+                "I can't create a complete answer or submission-ready assignment for you. Share what you have tried and the step where you are stuck; I can check your reasoning, explain the relevant concept, and suggest the next step using a similar example.",
             ),
             "analysis": "guided_help (Academic Integrity Triggered)",
             "security_flags": guardrail,
@@ -363,7 +378,11 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
     if not course_code:
         return {
             "current_node": "qa",
-            "response": "Hãy chọn một môn học trước khi đặt câu hỏi. Chatbot chỉ sử dụng học liệu của môn đang chọn.",
+            "response": _localized(
+                state,
+                "Hãy chọn một môn học trước khi đặt câu hỏi. Chatbot chỉ sử dụng học liệu của môn đang chọn.",
+                "Select a course before asking a question. The chatbot only uses materials from the selected course.",
+            ),
             "analysis": "missing_course_scope",
             "mode": "conversation",
             "retrieved_passages": [],
@@ -423,9 +442,10 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
     if passages and len(query_terms) <= 12 and scope_overlap == 0:
         return {
             "current_node": "qa",
-            "response": (
-                f"Câu này không thuộc nội dung môn {course_code}, nên mình không dùng học liệu của môn "
-                "để trả lời. Bạn hãy hỏi về khái niệm, bài học hoặc tài liệu của môn đang chọn."
+            "response": _localized(
+                state,
+                f"Câu này không thuộc nội dung môn {course_code}, nên mình không dùng học liệu của môn để trả lời. Bạn hãy hỏi về khái niệm, bài học hoặc tài liệu của môn đang chọn.",
+                f"This question is outside the scope of {course_code}, so I can't use that course's materials to answer it. Please ask about a concept, lesson, or resource from the selected course.",
             ),
             "analysis": "out_of_course_scope",
             "mode": "out_of_scope",
@@ -458,7 +478,11 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
 
     # Khởi tạo LLM
     if is_insufficient:
-        return {"current_node": "qa", "response": "Mình chưa tìm thấy đủ học liệu được phép truy cập để trả lời có căn cứ. Hãy kiểm tra tài liệu môn học hoặc hỏi giảng viên.",
+        return {"current_node": "qa", "response": _localized(
+                    state,
+                    "Mình chưa tìm thấy đủ học liệu được phép truy cập để trả lời có căn cứ. Hãy kiểm tra tài liệu môn học hoặc hỏi giảng viên.",
+                    "I couldn't find enough authorized course material to provide a well-supported answer. Please check the course resources or ask your instructor.",
+                ),
                 "analysis": "insufficient_sources", "retrieved_passages": [], "source_refs": []}
     scope = hashlib.sha256(json.dumps({"student": state.get("student_id"), "institution": state.get("institution_id"),
                                      "course": state.get("course_id"), "versions": state.get("authorized_file_versions"),
@@ -488,6 +512,11 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
                     "\nTrong phiên Do, ưu tiên câu trả lời ngắn khoảng 150–250 token; "
                     "đưa chi tiết bổ sung vào nguồn thay vì lặp lại đoạn trích dài."
                 )
+            system_prompt += (
+                "\nRespond entirely in English. Preserve source filenames, direct quotations, mathematical notation, source IDs, and citation metadata exactly as provided; do not translate quoted source passages."
+                if _response_locale(state) == "en"
+                else "\nTrả lời hoàn toàn bằng tiếng Việt. Giữ nguyên tên tệp, trích dẫn trực tiếp, ký hiệu toán học, source ID và metadata trích dẫn; không dịch các đoạn trích nguyên văn từ nguồn."
+            )
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
@@ -514,9 +543,9 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
                 response_text = expand_source_markers(message_text(res.content), passages)
         except Exception as exc:
             logger.warning("qa_llm_invocation_failed error_type=%s", type(exc).__name__)
-            response_text = "Mình chưa thể tạo câu trả lời lúc này. Hãy thử lại sau."
+            response_text = _localized(state, "Mình chưa thể tạo câu trả lời lúc này. Hãy thử lại sau.", "I can't generate an answer right now. Please try again later.")
     else:
-        response_text = "Mình chưa thể tạo câu trả lời lúc này. Hãy thử lại sau."
+        response_text = _localized(state, "Mình chưa thể tạo câu trả lời lúc này. Hãy thử lại sau.", "I can't generate an answer right now. Please try again later.")
 
     citation_validation = citation_check(response_text, passages) if passages else {
         "valid": False,
@@ -535,6 +564,7 @@ def qa_node(state: LearningGraphState) -> dict[str, Any]:
             query=search_query,
             max_chars=320 if is_do_support else 360,
             max_passages=2,
+            locale=_response_locale(state),
         )
         citation_validation = citation_check(response_text, passages)
 

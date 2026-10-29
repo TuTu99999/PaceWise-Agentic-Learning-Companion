@@ -24,10 +24,11 @@ from src.persistence_models import (
 )
 from src.security import SessionContext, get_current_session, require_csrf
 from src.services.agent_memory import persist_agent_outcome
+from src.services.do_chat_memory import clear_transcript, is_open, public_messages
 from src.services.do_preparation import confirmed_block, load_do_context
 from src.services.learning_events import audit
 from src.services.notification_policy import StudyPreferences
-from src.services.planning_time import block_at
+from src.services.planning_time import block_at, instant_at
 from src.services.study_activity import effective_rhythm
 from src.services.study_rhythm import compare_rhythm_trial, propose_rhythm, summarize_independent_assessment
 from src.services.study_sessions import HEARTBEAT_SECONDS, advance_timer
@@ -74,6 +75,15 @@ class Command(BaseModel):
         alias="lengthFeeling",
     )
     completion_percent: int = Field(default=0, alias="completionPercent", ge=0, le=100)
+    work_result: Literal["planned_part_done", "needs_more_time", "blocked"] | None = Field(
+        default=None,
+        alias="workResult",
+    )
+    additional_minutes: int = Field(default=0, alias="additionalMinutes", ge=0, le=1440)
+    understanding_self_report: Literal["not_reported", "can_continue", "needs_review", "needs_help"] = Field(
+        default="not_reported",
+        alias="understandingSelfReport",
+    )
     blocker: Literal["none", "knowledge", "time", "interruption", "other"] = "none"
     outside_minutes: int = Field(default=0, alias="outsideMinutes", ge=0, le=1440)
     note: str = Field(default="", max_length=500)
@@ -95,17 +105,140 @@ def public(row: StudyTimerSession) -> dict:
             "blockId": row.block_id, "version": row.version, "heartbeatSeconds": HEARTBEAT_SECONDS}
 
 
+def _auto_cancel_reason(db: Session, session: SessionContext, settings: Settings,
+                        row: StudyTimerSession, at: datetime) -> str | None:
+    """Return why an active timer can no longer belong to the confirmed plan."""
+    memories = db.scalars(select(LearnerMemory).where(
+        LearnerMemory.institution_id == settings.institution_id,
+        LearnerMemory.user_id == session.user_id,
+        LearnerMemory.course_id.in_(session.course_ids),
+    )).all()
+    plans = []
+    for memory in memories:
+        try:
+            plan = json.loads(memory.profile_json or "{}").get("last_confirmed_plan") or {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            plan = {}
+        if plan:
+            plans.append(plan)
+    # A confirmed plan can contain several courses but is stored under the
+    # course that was active when the learner confirmed it. Never interpret a
+    # missing per-course copy as proof that another course's active Do vanished.
+    block = next((item for plan in plans for item in plan.get("blocks", [])
+                  if item.get("id") == row.block_id), None)
+    if block is None:
+        return "plan_replaced" if plans else None
+    if block.get("status") in {"history", "tentative"} or block.get("taskId") != row.task_id:
+        return "plan_replaced"
+    try:
+        if block_at(block["date"], block["end"], settings.app_timezone) <= at:
+            return "block_ended"
+    except (KeyError, TypeError, ValueError):
+        return "plan_replaced"
+    return None
+
+
+def _auto_cancel_stale_active(db: Session, session: SessionContext, settings: Settings,
+                              row: StudyTimerSession | None, at: datetime) -> bool:
+    """Release a timer whose block ended or disappeared from the latest plan."""
+    if row is None:
+        return False
+    reason = _auto_cancel_reason(db, session, settings, row, at)
+    if reason is None:
+        return False
+    state = json.loads(row.state_json)
+    previous_version = row.version
+    if state.get("status") not in {"completed", "cancelled"}:
+        state = advance_timer(state, {"action": "cancel"}, at)
+    state.update(auto_cancel_reason=reason, cancelled_at=at.isoformat())
+    row.state_json = json.dumps(state)
+    clear_transcript(row)
+    row.active_scope = None
+    row.version += 1
+    audit(db, replace(session, course_id=row.course_id), settings, "STUDY_TIMER_AUTO_CANCELLED", row.id,
+          f"auto-cancel:{previous_version}", {"reason": reason, "block_id": row.block_id})
+    return True
+
+
+def _restore_false_plan_cancel(db: Session, session: SessionContext, settings: Settings,
+                               row: StudyTimerSession | None, at: datetime) -> bool:
+    """Restore a session cancelled by the former per-course plan lookup bug."""
+    if row is None:
+        return False
+    state = json.loads(row.state_json)
+    if state.get("status") != "cancelled" or state.get("auto_cancel_reason") != "plan_replaced":
+        return False
+    if _auto_cancel_reason(db, session, settings, row, at) is not None:
+        return False
+    active_scope = f"{settings.institution_id}:{session.user_id}"
+    occupied = db.scalar(select(StudyTimerSession).where(
+        StudyTimerSession.active_scope == active_scope,
+        StudyTimerSession.id != row.id,
+    ))
+    if occupied is not None:
+        return False
+    previous_version = row.version
+    state.update(status="paused", checkpoint_at=at.isoformat(), unobserved_gap=False)
+    state.pop("auto_cancel_reason", None)
+    state.pop("cancelled_at", None)
+    row.state_json = json.dumps(state)
+    row.active_scope = active_scope
+    row.version += 1
+    audit(db, replace(session, course_id=row.course_id), settings, "STUDY_TIMER_FALSE_CANCEL_RESTORED", row.id,
+          f"restore-false-cancel:{previous_version}", {"block_id": row.block_id})
+    return True
+
+
 @router.get("/current")
 def current(block_id: str = Query(alias="blockId"), session: SessionContext = Depends(get_current_session),
             settings: Settings = Depends(get_settings), db: Session = Depends(get_db)):
     student(session)
     row = db.scalar(select(StudyTimerSession).where(StudyTimerSession.institution_id == settings.institution_id,
                     StudyTimerSession.user_id == session.user_id, StudyTimerSession.block_id == block_id))
+    if _restore_false_plan_cancel(db, session, settings, row, now()):
+        db.commit()
+        db.refresh(row)
     active = db.scalar(select(StudyTimerSession).where(
         StudyTimerSession.active_scope == f"{settings.institution_id}:{session.user_id}",
         StudyTimerSession.course_id.in_(session.course_ids)))
+    if _auto_cancel_stale_active(db, session, settings, active, now()):
+        db.commit()
+        if row:
+            db.refresh(row)
+        active = None
     return {"session": public(row) if row and row.course_id in session.course_ids else None,
             "activeSession": public(active) if active else None}
+
+
+@router.get("/chat")
+def chat_history(
+    course_id: int = Query(alias="courseId", gt=0),
+    block_id: str = Query(alias="blockId", min_length=1, max_length=128),
+    session: SessionContext = Depends(get_current_session),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """Restore only the authenticated learner's still-active Do transcript."""
+    student(session)
+    if course_id not in session.course_ids:
+        raise HTTPException(403, "Course is outside enrollment")
+    row = db.scalar(select(StudyTimerSession).where(
+        StudyTimerSession.institution_id == settings.institution_id,
+        StudyTimerSession.user_id == session.user_id,
+        StudyTimerSession.course_id == course_id,
+        StudyTimerSession.block_id == block_id,
+    ))
+    if row is None:
+        return {"messages": []}
+    if _auto_cancel_stale_active(db, session, settings, row, now()):
+        db.commit()
+        return {"messages": []}
+    if not is_open(row):
+        if row.chat_json not in {None, "", "[]"}:
+            clear_transcript(row)
+            db.commit()
+        return {"messages": []}
+    return {"messages": public_messages(row)}
 
 
 @router.post("")
@@ -118,9 +251,17 @@ def start(payload: Start, session: SessionContext = Depends(require_csrf),
                          StudyTimerSession.user_id == session.user_id, StudyTimerSession.block_id == payload.block_id))
     if existing and existing.course_id != payload.course_id:
         raise HTTPException(409, "Block belongs to another course")
+    if _restore_false_plan_cancel(db, session, settings, existing, now()):
+        db.commit()
+        db.refresh(existing)
+    active_scope = f"{settings.institution_id}:{session.user_id}"
+    active = db.scalar(select(StudyTimerSession).where(StudyTimerSession.active_scope == active_scope))
+    if _auto_cancel_stale_active(db, session, settings, active, now()):
+        db.commit()
+        if existing:
+            db.refresh(existing)
     if existing and json.loads(existing.state_json)["status"] != "cancelled":
         return public(existing)
-    active_scope = f"{settings.institution_id}:{session.user_id}"
     other = db.scalar(select(StudyTimerSession).where(StudyTimerSession.active_scope == active_scope,
                         StudyTimerSession.block_id != payload.block_id))
     if other:
@@ -146,6 +287,9 @@ def start(payload: Start, session: SessionContext = Depends(require_csrf),
             break
     if not block or block.get("status") in {"history", "tentative"}:
         raise HTTPException(409, "Start from a server-confirmed study block")
+    earliest_start = instant_at(block.get("earliestStartAt"), settings.app_timezone)
+    if earliest_start is not None and now() < earliest_start:
+        raise HTTPException(409, "Complete the prerequisite learning before starting this study block")
     if block_at(block["date"], block["end"], settings.app_timezone) <= now():
         raise HTTPException(409, "Study block has ended; re-plan remaining work")
     workspace = db.get(UserWorkspace, session.user_id)
@@ -165,7 +309,7 @@ def start(payload: Start, session: SessionContext = Depends(require_csrf),
         try:
             count = db.execute(update(StudyTimerSession).where(StudyTimerSession.id == existing.id,
                 StudyTimerSession.version == existing.version).values(state_json=json.dumps(state), version=existing.version + 1,
-                    active_scope=active_scope), execution_options={"synchronize_session": False}).rowcount
+                    active_scope=active_scope, chat_json="[]"), execution_options={"synchronize_session": False}).rowcount
         except IntegrityError as exc:
             db.rollback()
             raise HTTPException(409, "Finish or cancel the previous study session first") from exc
@@ -216,7 +360,9 @@ def command(identifier: str, payload: Command, session: SessionContext = Depends
                             "planned_minutes": state["planned_minutes"],
                             "actual_minutes": int(changed["observed_seconds"] / 60) + payload.outside_minutes,
                             "completion_percent": payload.completion_percent, "blocker": payload.blocker,
-                            "blocker_note": payload.note})
+                            "blocker_note": payload.note, "work_result": payload.work_result,
+                            "remaining_minutes": payload.additional_minutes,
+                            "understanding_self_report": payload.understanding_self_report})
         observation = result["output"]["do_session"]
         assessment_summary, assessment_refs = summarize_independent_assessment([
             {**json.loads(record.payload_json or "{}"), "id": record.id,
@@ -243,6 +389,8 @@ def command(identifier: str, payload: Command, session: SessionContext = Depends
         raise HTTPException(409, "Session changed in another tab; reload its checkpoint")
     if payload.action == "complete":
         persist_agent_outcome(db, scoped, settings, result, None, commit=False)
+    if changed["status"] in {"completed", "cancelled"}:
+        clear_transcript(row)
     if payload.action != "checkpoint":
         audit(db, scoped, settings, f"STUDY_TIMER_{payload.action.upper()}", row.id, payload.event_key,
               {"status": changed["status"], "observed_seconds": changed["observed_seconds"],

@@ -23,7 +23,7 @@ Store. `.env` is excluded from both Git and the Docker build context.
 
 Required staging and production properties include:
 
-- PostgreSQL plus `DATABASE_SCHEMA_REVISION=20261012_02`;
+- PostgreSQL plus `DATABASE_SCHEMA_REVISION=20261015_01`;
 - standalone PaceWise course source (no LMS simulator dependency);
 - S3 course material storage with a KMS key;
 - remote Qdrant with no local vector-store fallback;
@@ -32,6 +32,18 @@ Required staging and production properties include:
   secrets, and the configured model provider key.
 - separate SQS ingestion/notification queues, each configured in AWS with its
   own DLQ redrive policy; messages contain opaque job IDs only.
+
+For the shared demo catalog, set both `GOOGLE_SIGNUP_ENABLED=true` and
+`GOOGLE_SIGNUP_AUTO_ENROLL_COURSES=true`. A verified Gmail student is then
+idempotently enrolled into each active, published standalone course taught by
+`GOOGLE_SIGNUP_AUTO_ENROLL_TEACHER_EMAIL` (the demo default is
+`teacher1@pacewise.edu.vn`). This
+grants access to the course tasks and published PDF/Word resources and creates
+the student's copies of teacher-managed class sessions. Course creation,
+Excel import, course restoration, Google sign-in, and the live course sync all
+reconcile membership, so neither the teacher nor the student accepts an
+invitation. Disable the auto-enroll flag before using isolated cohorts or a
+multi-tenant catalog.
 
 The ECS task should map Secrets Manager values through the container `secrets`
 array, for example:

@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from src.agents.workflows.do import evaluate_completion
 from src.services.plan_intelligence import mastery_for_component
 from src.services.planning import build_plan_draft
 from src.services.replan_policy import decide_replan, plan_diff
@@ -133,6 +134,28 @@ def test_replan_exposes_trusted_repair_context_for_the_scheduler():
     }
 
 
+def test_do_reflection_uses_concrete_remaining_minutes_to_propose_replan_without_asking_for_percent():
+    evaluated = evaluate_completion({
+        "block_id": "block-1",
+        "task_id": "task-1",
+        "planned_minutes": 70,
+        "actual_minutes": 64,
+        "work_result": "needs_more_time",
+        "remaining_minutes": 30,
+        "blocker": "none",
+    })["output"]["do_session"]
+
+    assert evaluated["status"] == "needs_more_time"
+    assert evaluated["remaining_minutes"] == 30
+    assert evaluated["completion_percent_source"] == "derived_from_remaining_minutes"
+    decision = _decision(last_do=evaluated)
+    assert decision["action"] == "propose_draft"
+    assert decision["reasons"] == ["unfinished_work"]
+    assert decision["requires_confirmation"] is True
+    assert decision["auto_apply"] is False
+    assert decision["repair_context"]["observed_remaining_minutes"] == 30
+
+
 def test_unknown_kc_and_new_course_do_not_inherit_similarly_named_knowledge():
     profile = {
         "relation.transitivity": {"level": "application", "source_evidence_ids": ["LE-relation"]},
@@ -143,8 +166,8 @@ def test_unknown_kc_and_new_course_do_not_inherit_similarly_named_knowledge():
     assert mastery_for_component(profile, "relation.transitivity") is not None
 
 
-def test_replan_preserves_elapsed_agent_blocks_even_for_unselected_tasks():
-    history = {
+def test_replan_releases_elapsed_agent_blocks_without_completion_evidence():
+    elapsed = {
         "id": "old",
         "taskId": "finished",
         "date": "2026-10-05",
@@ -153,9 +176,8 @@ def test_replan_preserves_elapsed_agent_blocks_even_for_unselected_tasks():
         "placementSource": "agent",
     }
     draft = build_plan_draft(
-        {"weekStart": "2026-10-05", "tasks": [], "pinnedBlocks": [history]},
+        {"weekStart": "2026-10-05", "tasks": [], "pinnedBlocks": [elapsed]},
         [],
         now=datetime(2026, 10, 8, 10, tzinfo=UTC),
     )
-    assert draft["blocks"][0]["id"] == "old"
-    assert draft["blocks"][0]["status"] == "history"
+    assert draft["blocks"] == []

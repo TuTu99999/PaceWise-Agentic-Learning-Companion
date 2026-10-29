@@ -2,6 +2,8 @@ export interface AdaptiveCheckpoint {
   session_id: string;
   status: 'active' | 'needs_support' | 'verification_required' | 'review_required' | 'stopped' | 'completed' | 'coverage_gap';
   stage: 'recall' | 'explain' | 'why' | 'application' | 'transfer';
+  stage_number: number;
+  stage_total: number;
   mode: 'learning' | 'retention';
   probe_id?: string | null;
   kc_id: string;
@@ -19,12 +21,13 @@ export interface AdaptiveCheckpoint {
   delayed_probe?: { id: string; due_at: string; status: string };
   last_result?: {
     feedback: string;
+    status?: 'chưa đủ bằng chứng' | 'còn nhầm lẫn' | 'đang hình thành' | 'đã thể hiện được';
     confidence: string;
     demonstrated_level: string;
     provisional?: boolean;
     requires_instructor_review: boolean;
     evidence_ids: string[];
-    criterion_scores: Array<{ criterion_id: string; score: number; evidence_quote: string }>;
+    criterion_scores: Array<{ criterion_id: string; criterion_text?: string; score: number; evidence_quote: string }>;
   };
 }
 

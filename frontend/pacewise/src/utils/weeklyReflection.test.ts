@@ -35,18 +35,14 @@ describe('weeklyReflectionCycle', () => {
     });
   });
 
-  it('opens Sunday at 20:00 by default', () => {
-    expect(weeklyReflectionCycle(null, '2026-10-04', '19:59').isOpen).toBe(false);
-    expect(weeklyReflectionCycle(null, '2026-10-04', '20:00').isOpen).toBe(true);
+  it('opens for the whole of Sunday', () => {
+    expect(weeklyReflectionCycle(null, '2026-10-03', '23:59').isOpen).toBe(false);
+    expect(weeklyReflectionCycle(null, '2026-10-04', '00:00').isOpen).toBe(true);
   });
 
-  it('waits for the final Sunday study block', () => {
+  it('does not wait for the final Sunday study block', () => {
     const plan = planWithSundayBlock('21:00');
-    expect(weeklyReflectionCycle(plan, '2026-10-04', '20:30')).toMatchObject({
-      opensAt: '21:00',
-      isOpen: false,
-    });
-    expect(weeklyReflectionCycle(plan, '2026-10-04', '21:00').isOpen).toBe(true);
+    expect(weeklyReflectionCycle(plan, '2026-10-04', '08:00').isOpen).toBe(true);
   });
 
   it('keeps the previous week open until Monday 09:00', () => {
@@ -62,10 +58,9 @@ describe('weeklyReflectionCycle', () => {
     });
   });
 
-  it('defaults to the finished week after the Monday grace period', () => {
-    expect(defaultWeeklyReflectionWeekStart(null, '2026-10-12', '17:00')).toBe('2026-10-05');
-    expect(defaultWeeklyReflectionWeekStart(null, '2026-10-18', '19:59')).toBe('2026-10-05');
-    expect(defaultWeeklyReflectionWeekStart(null, '2026-10-18', '20:00')).toBe('2026-10-12');
+  it('defaults to the calendar week containing the current date', () => {
+    expect(defaultWeeklyReflectionWeekStart(null, '2026-10-12', '17:00')).toBe('2026-10-12');
+    expect(defaultWeeklyReflectionWeekStart(null, '2026-10-18', '00:00')).toBe('2026-10-12');
   });
 
   it('marks an explicitly selected finished week as complete', () => {

@@ -142,6 +142,69 @@ describe('deterministic reminders', () => {
     expect(item?.message).toContain('chỉ đổi sau khi bạn xác nhận');
   });
 
+  it('asks for AI reanalysis when the teacher schedule changed without a conflict', () => {
+    const reminders = build({
+      tasks: [],
+      planImpacts: [{
+        id: 'schedule-change-1',
+        kind: 'schedule_changed',
+        title: 'Giảng viên đã thay đổi lịch học',
+        message: 'Buổi học chuyển sang 15:00–16:00. Bấm AI phân tích lại.',
+        deficitMin: 0,
+        affectedBlockIds: [],
+        detectedAt: now.toISOString(),
+      }],
+    });
+    const item = activeReminders(reminders, now).find((entry) => entry.kind === 'lms_change');
+    expect(item).toMatchObject({
+      title: 'Giảng viên đã thay đổi lịch học',
+      href: '/plan?reanalyze=lms&impactId=schedule-change-1',
+    });
+  });
+
+  it('creates an actionable reanalysis notification when the student joins a new course', () => {
+    const reminders = build({
+      tasks: [],
+      planImpacts: [{
+        id: 'course-added:2',
+        kind: 'course_added',
+        title: 'Bạn được thêm vào môn học mới',
+        message: 'Bấm AI phân tích lại để cập nhật kế hoạch.',
+        courseId: '2',
+        deficitMin: 0,
+        affectedBlockIds: [],
+        detectedAt: now.toISOString(),
+      }],
+    });
+    const item = activeReminders(reminders, now).find((entry) => entry.kind === 'lms_change');
+    expect(item).toMatchObject({
+      title: 'Bạn được thêm vào môn học mới',
+      href: '/plan?reanalyze=lms&impactId=course-added%3A2&courseId=2',
+    });
+  });
+
+  it.each([
+    ['capacity_released', 'released-capacity'],
+    ['deadline_later', 'later-deadline'],
+    ['assignment_removed', 'removed-assignment'],
+  ] as const)('keeps %s visible as an actionable Plan-change notification', (kind, id) => {
+    const reminders = build({
+      planImpacts: [{
+        id,
+        kind,
+        title: 'Kế hoạch cần được kiểm tra lại',
+        message: 'Dữ liệu môn học vừa thay đổi.',
+        taskId: 'task-1',
+        courseId: '1',
+        deficitMin: 0,
+        affectedBlockIds: [],
+        detectedAt: now.toISOString(),
+      }],
+    });
+    const item = activeReminders(reminders, now).find((entry) => entry.kind === 'lms_change');
+    expect(item?.href).toBe(`/plan?reanalyze=lms&impactId=${id}&taskId=task-1&courseId=1`);
+  });
+
   it('stops at three browser deliveries per local day and never hides in-app reminders', () => {
     const reminders = build({
       tasks: [

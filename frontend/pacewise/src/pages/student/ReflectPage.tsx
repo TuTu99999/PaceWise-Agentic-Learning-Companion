@@ -10,24 +10,22 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Banner } from '../../components/ui/States';
 import { useToast } from '../../components/ui/Toast';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
+import { useLocale } from '../../i18n/LocaleContext';
 import { confirmReflection, createReflection, type AgentResponse } from '../../services/api';
 import { useAppStore } from '../../store/AppStore';
+import type { LMSCourseData, Plan, Reflection, StudySession } from '../../types';
 import type { ReflectionActivity } from '../../utils/reflectionActivities';
 import { buildReflectionActivities, reflectionActivityWindow, reflectionNeedsPlanReview } from '../../utils/reflectionActivities';
 import { replanHref } from '../../utils/replanNavigation';
 import { weekStats } from '../../utils/progress';
 import { addDays, calendarWeekStart, currentAppDateTime, formatDay, formatDM, formatDuration, formatHours } from '../../utils/time';
 import { defaultWeeklyReflectionWeekStart, planForReflectionWeek, weeklyReflectionCycle } from '../../utils/weeklyReflection';
+import { englishDemoReflectionAnswer, englishDemoTaskTitle } from '../../utils/demoContentTranslation';
 
 const WEEKLY_QUESTIONS = [
   'Tuần này việc gì đã hoàn thành hoặc chưa hoàn thành?',
   'Nguyên nhân chính khiến kế hoạch đúng hoặc bị lệch?',
   'Tuần sau cần thay đổi thời lượng, khung giờ hay cách chia task nào?',
-] as const;
-const ACTIVITY_QUESTIONS = [
-  'Sau hoạt động này, phần việc nào đã hoàn thành hoặc còn lại?',
-  'Phiên có quá dài, mệt hoặc bị gián đoạn không? Nguyên nhân là gì?',
-  'Bước tiếp theo phù hợp nhất là gì?',
 ] as const;
 const MAX = 500;
 const ACTIVITY_PREVIEW_LIMIT = 3;
@@ -37,12 +35,102 @@ const REFLECTION_STATUS_OPTIONS = [
   { value: 'reflected', label: 'Đã phản tư' },
 ];
 
+type ActivityFeedback = NonNullable<Reflection['activityFeedback']>;
+
+const UNDERSTANDING_OPTIONS: Array<{ value: ActivityFeedback['understanding']; label: string }> = [
+  { value: 'can_continue', label: 'Có thể tự làm tiếp' },
+  { value: 'needs_review', label: 'Hiểu một phần, cần ôn lại' },
+  { value: 'needs_help', label: 'Chưa hiểu, cần hỗ trợ' },
+];
+const BLOCKER_OPTIONS: Array<{ value: ActivityFeedback['blocker']; label: string }> = [
+  { value: 'none', label: 'Không có' },
+  { value: 'interruption', label: 'Bị gián đoạn' },
+  { value: 'difficult', label: 'Nội dung khó' },
+  { value: 'too_long', label: 'Phiên quá dài' },
+  { value: 'fatigue', label: 'Mệt hoặc mất tập trung' },
+  { value: 'resources', label: 'Thiếu tài liệu hoặc công cụ' },
+];
+const NEXT_ACTION_OPTIONS: Array<{ value: ActivityFeedback['nextAction']; label: string }> = [
+  { value: 'next_task', label: 'Chuyển sang nhiệm vụ tiếp theo' },
+  { value: 'continue_task', label: 'Học tiếp phần còn lại' },
+  { value: 'review', label: 'Ôn lại nội dung này' },
+  { value: 'assessment', label: 'Làm bài kiểm tra' },
+  { value: 'seek_help', label: 'Nhờ hỗ trợ' },
+];
+
+function defaultActivityFeedback(activity?: ReflectionActivity): ActivityFeedback {
+  const unfinished = activity?.outcome === 'needs_more_time' || activity?.workResult === 'needs_more_time';
+  const blocked = activity?.outcome === 'blocked' || activity?.workResult === 'blocked';
+  return {
+    understanding: blocked ? 'needs_help' : 'can_continue',
+    blocker: blocked ? 'difficult' : 'none',
+    nextAction: blocked ? 'seek_help' : unfinished ? 'continue_task' : 'next_task',
+    note: '',
+  };
+}
+
+function activityAnswers(activity: ReflectionActivity, feedback: ActivityFeedback, locale: 'vi' | 'en'): [string, string, string] {
+  const result = activity.outcome === 'blocked' || activity.workResult === 'blocked'
+    ? locale === 'en' ? 'The session ended while the learner was blocked.' : 'Phiên kết thúc khi đang bị vướng.'
+    : activity.outcome === 'needs_more_time' || activity.workResult === 'needs_more_time'
+      ? locale === 'en' ? `Unfinished; ${activity.remainingMinutes ?? 0} more minutes are needed.` : `Chưa xong; cần thêm ${activity.remainingMinutes ?? 0} phút.`
+      : locale === 'en' ? 'The planned work for this session was completed.' : 'Đã hoàn thành phần việc dự kiến của phiên.';
+  const understanding = UNDERSTANDING_OPTIONS.find((item) => item.value === feedback.understanding)?.label ?? '';
+  const blocker = BLOCKER_OPTIONS.find((item) => item.value === feedback.blocker)?.label ?? '';
+  const nextAction = NEXT_ACTION_OPTIONS.find((item) => item.value === feedback.nextAction)?.label ?? '';
+  if (locale === 'en') {
+    const understandingEn = { can_continue: 'Can continue independently', needs_review: 'Partly understood; needs review', needs_help: 'Not understood; needs support' }[feedback.understanding];
+    const blockerEn = { none: 'None', interruption: 'Interrupted', difficult: 'Difficult content', too_long: 'Session was too long', fatigue: 'Tired or distracted', resources: 'Missing materials or tools' }[feedback.blocker];
+    const nextActionEn = { next_task: 'Move to the next task', continue_task: 'Continue the remaining work', review: 'Review this content', assessment: 'Take an assessment', seek_help: 'Ask for help' }[feedback.nextAction];
+    return [
+      result,
+      `Self-assessment: ${understandingEn}. Obstacle: ${blockerEn}.`,
+      `${nextActionEn}.${feedback.note.trim() ? ` Note: ${feedback.note.trim()}` : ''}`,
+    ];
+  }
+  return [
+    result,
+    `Tự đánh giá: ${understanding}. Trở ngại: ${blocker}.`,
+    `${nextAction}.${feedback.note.trim() ? ` Ghi chú: ${feedback.note.trim()}` : ''}`,
+  ];
+}
+
+function requestedReflectionDate(
+  requestedActivity: string | null,
+  currentPlan: Plan | null,
+  planHistory: Plan[],
+  sessions: StudySession[],
+  courseData: Record<string, LMSCourseData>,
+) {
+  if (!requestedActivity) return undefined;
+  if (requestedActivity.startsWith('study:')) {
+    const blockId = requestedActivity.slice('study:'.length);
+    return [currentPlan, ...planHistory]
+      .flatMap((plan) => plan?.blocks ?? [])
+      .find((block) => block.id === blockId)?.date;
+  }
+  if (requestedActivity.startsWith('session:')) {
+    const sessionId = requestedActivity.slice('session:'.length);
+    return sessions.find((session) => session.id === sessionId)?.date;
+  }
+  if (requestedActivity.startsWith('lms:')) {
+    const stableId = requestedActivity.slice('lms:'.length);
+    const item = Object.values(courseData)
+      .flatMap((data) => data.calendarItems ?? [])
+      .find((candidate) => `${candidate.type}:${candidate.id}` === stableId);
+    return item?.starts_at.slice(0, 10);
+  }
+  return undefined;
+}
+
 function ActivityButton({ activity, selected, onClick }: { activity: ReflectionActivity; selected: boolean; onClick: () => void }) {
+  const { locale, t } = useLocale();
   const result = activity.missed
-    ? 'Chưa ghi nhận thực hiện'
+    ? t('Chưa ghi nhận thực hiện', 'Not recorded as completed')
     : activity.actualMinutes != null
-      ? `${formatDuration(activity.actualMinutes)} thực tế${activity.completionPercent != null ? ` · ${activity.completionPercent}%` : ''}`
+      ? `${t(formatDuration(activity.actualMinutes))} ${t('thực tế', 'actual')}${activity.completionPercent != null ? ` · ${activity.completionPercent}%` : ''}`
       : `${activity.start}${activity.end ? `–${activity.end}` : ''}`;
+  const title = locale === 'en' ? englishDemoTaskTitle(activity.title) : activity.title;
   return (
     <button
       type="button"
@@ -51,17 +139,18 @@ function ActivityButton({ activity, selected, onClick }: { activity: ReflectionA
       className={`w-full rounded-xl border p-3 text-left transition ${selected ? 'border-primary-dark bg-primary-light text-primary-ink' : 'border-line bg-white hover:border-primary'}`}
     >
       <span className="flex items-center justify-between gap-2">
-        <span className="text-xs font-bold uppercase tracking-wide">{activity.kindLabel}</span>
+        <span className="text-xs font-bold uppercase tracking-wide">{t(activity.kindLabel)}</span>
         <span className="text-xs text-muted">{activity.courseCode}</span>
       </span>
-      <span className="mt-1 block truncate text-sm font-semibold text-ink">{activity.title}</span>
-      <span className="mt-1 block text-xs text-muted">{formatDay(activity.date, { short: true })} · {result}</span>
+      <span className="mt-1 block truncate text-sm font-semibold text-ink">{title}</span>
+      <span className="mt-1 block text-xs text-muted">{t(formatDay(activity.date, { short: true }))} · {result}</span>
     </button>
   );
 }
 
 export function ReflectPage() {
   useDocumentTitle('Phản tư học tập');
+  const { locale, t } = useLocale();
   const { state, dispatch } = useAppStore();
   const toast = useToast();
   const navigate = useNavigate();
@@ -70,8 +159,15 @@ export function ReflectPage() {
   const now = currentAppDateTime();
   const currentWeekStart = calendarWeekStart(now.date);
   const previousWeekStart = addDays(currentWeekStart, -7);
+  const requestedDate = requestedReflectionDate(
+    requestedActivity,
+    state.plan,
+    state.planHistory,
+    state.sessions,
+    state.courseData,
+  );
   const [selectedWeekStart, setSelectedWeekStart] = useState(() => (
-    defaultWeeklyReflectionWeekStart(state.plan, now.date, now.time)
+    requestedDate ? calendarWeekStart(requestedDate) : defaultWeeklyReflectionWeekStart(state.plan, now.date, now.time)
   ));
   const [weekPickerOpen, setWeekPickerOpen] = useState(false);
   const [courseFilter, setCourseFilter] = useState('all');
@@ -89,7 +185,7 @@ export function ReflectPage() {
     weeklyEnd: cycle.weekEnd,
   });
   const activities = useMemo(() => buildReflectionActivities({
-    plan: requestedActivity ? state.plan : reflectionPlan,
+    plan: reflectionPlan,
     sessions: state.sessions,
     tasks: state.tasks,
     courses: state.courses,
@@ -128,13 +224,21 @@ export function ReflectPage() {
     ?? (scope === 'weekly'
       ? Object.values(state.reflections).find((item) => (item.scope ?? 'weekly') === 'weekly' && item.courseId === 'all' && item.weekStart === cycle.weekStart)
       : undefined);
+  const [editingExistingWeekly, setEditingExistingWeekly] = useState(false);
+  const weeklyReflectionLocked = scope === 'weekly' && Boolean(currentReflection) && !editingExistingWeekly;
   const stats = weekStats(state.tasks, state.sessions, reflectionPlan, cycle.weekStart);
-  const questions = scope === 'activity' ? ACTIVITY_QUESTIONS : WEEKLY_QUESTIONS;
-  const [answers, setAnswers] = useState<[string, string, string]>(currentReflection?.answers ?? ['', '', '']);
+  const localizedStoredAnswers = useMemo(() => (locale === 'en'
+    ? (currentReflection?.answers ?? ['', '', '']).map(englishDemoReflectionAnswer)
+    : (currentReflection?.answers ?? ['', '', ''])) as [string, string, string], [currentReflection?.answers, locale]);
+  const [answers, setAnswers] = useState<[string, string, string]>(localizedStoredAnswers);
+  const [activityFeedback, setActivityFeedback] = useState<ActivityFeedback>(
+    currentReflection?.activityFeedback ?? defaultActivityFeedback(activity),
+  );
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState<AgentResponse | null>(null);
-  const dirty = JSON.stringify(answers) !== JSON.stringify(currentReflection?.answers ?? ['', '', '']);
+  const submittedAnswers = activity ? activityAnswers(activity, activityFeedback, locale) : answers;
+  const dirty = JSON.stringify(submittedAnswers) !== JSON.stringify(localizedStoredAnswers);
   const visibleActivities = useMemo(() => {
     if (activitiesExpanded) return filteredActivities;
     const selected = activity && filteredActivities.find((item) => item.id === activity.id);
@@ -151,19 +255,25 @@ export function ReflectPage() {
   }, [selectedWeekStart]);
 
   useEffect(() => {
+    if (requestedDate) setSelectedWeekStart(calendarWeekStart(requestedDate));
+  }, [requestedDate]);
+
+  useEffect(() => {
     if (!requestedActivity) return;
     const requestedId = `activity:${requestedActivity}`;
     if (activities.some((item) => `activity:${item.id}` === requestedId)) setSelectedId(requestedId);
   }, [activities, requestedActivity]);
 
   useEffect(() => {
-    setAnswers(currentReflection?.answers ?? ['', '', '']);
+    setAnswers(localizedStoredAnswers);
+    setActivityFeedback(currentReflection?.activityFeedback ?? defaultActivityFeedback(activity));
+    setEditingExistingWeekly(false);
     setDraft(null);
     setError('');
-  }, [reflectionKey, currentReflection?.savedAt]);
+  }, [activity?.id, reflectionKey, currentReflection?.savedAt, localizedStoredAnswers]);
 
   const save = async () => {
-    if (answers.every((answer) => !answer.trim())) {
+    if (submittedAnswers.every((answer) => !answer.trim())) {
       setError('Trả lời ít nhất một câu để tạo bản phản tư.');
       return;
     }
@@ -186,6 +296,11 @@ export function ReflectPage() {
               planned_minutes: activity.plannedMinutes,
               actual_minutes: activity.actualMinutes,
               completion_percent: activity.completionPercent,
+              remaining_minutes: activity.remainingMinutes,
+              work_result: activity.workResult,
+              understanding_self_report: activityFeedback.understanding,
+              reported_blocker: activityFeedback.blocker,
+              requested_next_action: activityFeedback.nextAction,
               blocker: activity.blocker,
               outcome: activity.outcome,
               missed: activity.missed,
@@ -201,7 +316,7 @@ export function ReflectPage() {
             activity_count: activities.length,
             period_complete: cycle.periodComplete,
           };
-      setDraft(await createReflection(answers.map((answer) => answer.trim()) as [string, string, string], metrics));
+      setDraft(await createReflection(submittedAnswers.map((answer) => answer.trim()) as [string, string, string], metrics, locale));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Chưa tạo được bản phản tư.');
     } finally {
@@ -213,7 +328,7 @@ export function ReflectPage() {
     if (!draft) return;
     setLoading(true);
     try {
-      const confirmed = await confirmReflection(scope, activity?.courseId);
+      const confirmed = await confirmReflection(scope, activity?.courseId, locale);
       dispatch({
         type: 'SAVE_REFLECTION',
         reflectionKey,
@@ -224,7 +339,8 @@ export function ReflectPage() {
         activityId: activity?.id,
         activityTitle: activity?.title,
         activityKind: activity?.kind,
-        answers: answers.map((answer) => answer.trim()) as [string, string, string],
+        answers: submittedAnswers.map((answer) => answer.trim()) as [string, string, string],
+        activityFeedback: scope === 'activity' ? activityFeedback : undefined,
         aiDraft: draft.reflection_draft ?? undefined,
         aiSummary: draft.response,
       });
@@ -307,6 +423,7 @@ export function ReflectPage() {
                 <input
                   id="reflection-week-date"
                   type="date"
+                  lang={locale === 'en' ? 'en-GB' : 'vi-VN'}
                   max={now.date}
                   value={selectedWeekStart}
                   onChange={(event) => {
@@ -326,8 +443,12 @@ export function ReflectPage() {
             aria-pressed={scope === 'weekly'}
             className={`mt-3 w-full rounded-xl border p-3 text-left transition ${scope === 'weekly' ? 'border-primary-dark bg-primary-light' : 'border-line bg-white hover:border-primary'}`}
           >
-            <span className="block text-sm font-bold text-ink">Tất cả hoạt động trong tuần</span>
-            <span className="mt-1 block text-xs text-muted">{activities.length} mốc · tất cả môn · {formatDM(cycle.weekStart)}–{formatDM(cycle.weekEnd)}</span>
+            <span className="block text-sm font-bold text-ink">{t('Tất cả hoạt động trong tuần', 'All activities this week')}</span>
+            <span className="mt-1 block text-xs text-muted">
+              {locale === 'en'
+                ? `${activities.length} ${activities.length === 1 ? 'activity' : 'activities'} · all courses · ${formatDM(cycle.weekStart)}–${formatDM(cycle.weekEnd)}`
+                : `${activities.length} mốc · tất cả môn · ${formatDM(cycle.weekStart)}–${formatDM(cycle.weekEnd)}`}
+            </span>
           </button>
           {activities.length > 0 && (
             <div className="mt-4 grid grid-cols-2 gap-2">
@@ -389,19 +510,22 @@ export function ReflectPage() {
           {!activity ? (
             <>
               {cycle.isGracePeriod ? (
-                <Banner tone="warning" icon="clock">Bạn đang dùng thời gian hoàn thành bù. Weekly Reflect đóng lúc 09:00 sáng nay.</Banner>
+                <Banner tone="warning" icon="clock">{t('Bạn đang dùng thời gian hoàn thành bù. Weekly Reflect đóng lúc 09:00 sáng nay.', 'You are using the completion grace period. Weekly Reflect closes at 09:00 today.')}</Banner>
               ) : cycle.isPastPeriod ? (
-                <Banner tone="info" icon="clock">Đang tổng kết tuần đã kết thúc {formatDM(cycle.weekStart)}–{formatDM(cycle.weekEnd)}. Số liệu chỉ tính phiên Do và kết quả học tập thuộc tuần này.</Banner>
+                <Banner tone="info" icon="clock">{locale === 'en'
+                  ? `Summarizing the completed week ${formatDM(cycle.weekStart)}–${formatDM(cycle.weekEnd)}. Metrics include only study sessions and learning outcomes from this week.`
+                  : `Đang tổng kết tuần đã kết thúc ${formatDM(cycle.weekStart)}–${formatDM(cycle.weekEnd)}. Số liệu chỉ tính phiên Do và kết quả học tập thuộc tuần này.`}</Banner>
               ) : cycle.isOpen ? (
-                <Banner tone="info" icon="clock">Weekly Reflect đã mở. Kết quả của các phản tư ngắn sẽ được dùng làm bằng chứng tổng hợp.</Banner>
+                <Banner tone="info" icon="clock">{t('Weekly Reflect đã mở. Kết quả của các phản tư ngắn sẽ được dùng làm bằng chứng tổng hợp.', 'Weekly Reflect is open. Your brief reflections will be used as supporting evidence for the weekly summary.')}</Banner>
               ) : (
-                <Banner tone="warning" icon="clock">Bạn đang phản tư sớm. AI chỉ dùng dữ liệu đến hiện tại; bạn có thể cập nhật bản tổng kết chính thức Chủ Nhật {formatDM(cycle.weekEnd)} lúc {cycle.opensAt}.</Banner>
+                <Banner tone="warning" icon="clock">{locale === 'en'
+                  ? `You are reflecting early. AI will only use data available so far; the weekly summary opens on Sunday ${formatDM(cycle.weekEnd)}.`
+                  : `Bạn đang phản tư sớm. AI chỉ dùng dữ liệu đến hiện tại; bản tổng kết tuần sẽ mở vào Chủ Nhật ${formatDM(cycle.weekEnd)}.`}</Banner>
               )}
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <StatTile icon="checkCircle" label="Nhiệm vụ đã hoàn thành" value={`${stats.done} / ${stats.total}`} />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <StatTile icon="clock" label="Phiên Do đã ghi nhận" value={stats.sessionCount} />
-                <StatTile icon="chart" label="Thời gian Do đã ghi nhận" value={formatHours(stats.studiedMin)} />
-                <StatTile icon="calendar" label="Thời lượng đã lên lịch" value={formatHours(stats.plannedMin)} />
+                <StatTile icon="chart" label="Thời gian Do đã ghi nhận" value={t(formatHours(stats.studiedMin))} />
+                <StatTile icon="calendar" label="Thời lượng đã lên lịch" value={t(formatHours(stats.plannedMin))} />
               </div>
               {activities.length === 0 && (
                 <Banner tone="info" icon="info">
@@ -412,44 +536,125 @@ export function ReflectPage() {
                 </Banner>
               )}
             </>
-          ) : (
-            <Banner tone={activity.missed ? 'warning' : 'info'} icon={activity.missed ? 'alert' : 'checkCircle'}>
-              <strong>{activity.kindLabel} · {activity.courseCode}</strong><br />
-              {activity.title} · {formatDay(activity.date)}{activity.start ? `, ${activity.start}${activity.end ? `–${activity.end}` : ''}` : ''}
-              {activity.actualMinutes != null ? ` · thực tế ${formatDuration(activity.actualMinutes)}` : activity.missed ? ' · chưa có phiên Do' : ''}
-            </Banner>
-          )}
+          ) : null}
 
           <Card aria-labelledby="reflection-questions">
             <CardHeader
               id="reflection-questions"
-              title={scope === 'activity' ? 'Phản tư sau hoạt động' : 'Phản tư cả tuần'}
-              subtitle={scope === 'activity' ? 'Ghi nhận nhanh trong 20–30 giây.' : 'Tổng hợp mọi môn trong 5–10 phút.'}
+              title={scope === 'activity' ? 'Kết quả phiên học' : 'Phản tư cả tuần'}
+              subtitle={scope === 'activity' ? undefined : 'Tổng hợp mọi môn trong 5–10 phút.'}
             />
             {currentReflection && !dirty && (
-              <div className="mb-4"><Banner tone="success" icon="checkCircle">Đã lưu lúc {new Date(currentReflection.savedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}. Bạn vẫn có thể chỉnh sửa.</Banner></div>
+              <div className="mb-4">
+                <Banner
+                  tone="success"
+                  icon="checkCircle"
+                  action={weeklyReflectionLocked ? (
+                    <Button size="sm" variant="secondary" onClick={() => setEditingExistingWeekly(true)}>{t('Phản tư tiếp', 'Reflect again')}</Button>
+                  ) : undefined}
+                >
+                  {locale === 'en' ? (
+                    <>{scope === 'weekly'
+                      ? cycle.periodComplete ? 'A weekly summary is available.' : 'A provisional weekly reflection is available.'
+                      : 'A reflection is available for this session.'}
+                    {' '}Updated at {new Date(currentReflection.savedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}.
+                    {scope === 'weekly' && ' Plan is using the latest version.'}</>
+                  ) : (
+                    <>{scope === 'weekly'
+                      ? cycle.periodComplete ? 'Đã có tổng kết tuần.' : 'Đã có phản tư tuần này — bản tạm thời.'
+                      : 'Đã có phản tư cho phiên này.'}
+                    {' '}Cập nhật lúc {new Date(currentReflection.savedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}.
+                    {scope === 'weekly' && ' Plan đang dùng bản mới nhất.'}</>
+                  )}
+                </Banner>
+              </div>
             )}
-            <div className="space-y-5">
-              {questions.map((label, index) => (
+            {activity ? (
+              <div className="space-y-5">
+                <fieldset>
+                  <legend className="text-sm font-semibold">Sau phiên này bạn đang ở mức nào?</legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    {UNDERSTANDING_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={activityFeedback.understanding === option.value}
+                        onClick={() => setActivityFeedback((value) => ({ ...value, understanding: option.value }))}
+                        className={`rounded-xl border p-3 text-left text-sm font-semibold ${activityFeedback.understanding === option.value ? 'border-primary-dark bg-primary-light text-primary-ink' : 'border-line bg-white text-ink hover:border-primary'}`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted">Đây là tự đánh giá; chỉ bài kiểm tra hoặc bằng chứng đã xác minh mới cập nhật mức hiểu.</p>
+                </fieldset>
+
+                <fieldset>
+                  <legend className="text-sm font-semibold">Trở ngại — không bắt buộc</legend>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {BLOCKER_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={activityFeedback.blocker === option.value}
+                        onClick={() => setActivityFeedback((value) => ({ ...value, blocker: option.value }))}
+                        className={`rounded-full border px-3 py-2 text-sm font-medium ${activityFeedback.blocker === option.value ? 'border-primary-dark bg-primary-light text-primary-ink' : 'border-line bg-white text-muted hover:border-primary'}`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend className="text-sm font-semibold">Bước tiếp theo phù hợp nhất?</legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {NEXT_ACTION_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={activityFeedback.nextAction === option.value}
+                        onClick={() => setActivityFeedback((value) => ({ ...value, nextAction: option.value }))}
+                        className={`rounded-xl border p-3 text-left text-sm font-semibold ${activityFeedback.nextAction === option.value ? 'border-primary-dark bg-primary-light text-primary-ink' : 'border-line bg-white text-ink hover:border-primary'}`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </fieldset>
+
                 <Textarea
-                  key={label}
-                  label={`${index + 1}. ${label}`}
-                  value={answers[index]}
-                  maxLength={MAX}
-                  hint={`${answers[index].length}/${MAX} ký tự`}
-                  onChange={(event) => {
-                    const next = [...answers] as [string, string, string];
-                    next[index] = event.target.value;
-                    setAnswers(next);
-                  }}
+                  label="Ghi chú thêm — không bắt buộc"
+                  value={activityFeedback.note}
+                  maxLength={200}
+                  rows={2}
+                  onChange={(event) => setActivityFeedback((value) => ({ ...value, note: event.target.value }))}
                 />
-              ))}
-            </div>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {WEEKLY_QUESTIONS.map((label, index) => (
+                  <Textarea
+                    key={label}
+                    label={`${index + 1}. ${label}`}
+                    value={answers[index]}
+                    disabled={weeklyReflectionLocked}
+                    maxLength={MAX}
+                    hint={`${answers[index].length}/${MAX} ký tự`}
+                    onChange={(event) => {
+                      const next = [...answers] as [string, string, string];
+                      next[index] = event.target.value;
+                      setAnswers(next);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
             {error && <p role="alert" className="mt-4 text-sm font-medium text-danger-ink">{error}</p>}
             {draft && (
               <div className="mt-5 rounded-xl border border-[#D6E2FD] bg-primary-light p-4">
                 <h3 className="font-semibold">Bản phản tư do AI đề xuất — chưa lưu</h3>
-                <div className="mt-2 text-sm"><MarkdownContent>{draft.response}</MarkdownContent></div>
+                <div data-i18n-skip="true" className="mt-2 text-sm"><MarkdownContent>{draft.response}</MarkdownContent></div>
                 <div className="mt-4 flex flex-wrap gap-3">
                   <Button icon="check" onClick={confirm} loading={loading}>{scope === 'activity' ? 'Lưu và về lịch học' : 'Lưu và xem lịch đề xuất'}</Button>
                   <Button variant="secondary" onClick={() => setDraft(null)}>Chỉnh lại câu trả lời</Button>

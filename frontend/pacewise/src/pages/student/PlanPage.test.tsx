@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -52,6 +52,37 @@ describe('student calendar editing workflow', () => {
     expect(fixture.state.plan).toBe(applied);
     expect(screen.queryByRole('dialog', { name: /mục tiêu/i })).not.toBeInTheDocument();
   });
+  it('sends assignments and classes in the rolling 7-day future horizon', async () => {
+    vi.setSystemTime(new Date('2026-10-18T08:00:00+07:00'));
+    fixture.state.tasks = fixture.state.tasks.map((task, index) => ({
+      ...task,
+      deadline: index === 0 ? '2026-10-23' : '2026-10-25',
+      dueAt: index === 0 ? '2026-10-23T23:59:00+07:00' : '2026-10-25T23:59:00+07:00',
+    }));
+    fixture.state.courseData = {
+      '1': {
+        courseId: '1', modules: [], resources: [], plannerItems: [], appointmentGroups: [],
+        calendarItems: [{
+          id: 'future-class', source_id: 99, type: 'event', course_id: 1, course_code: 'TRR',
+          title: 'Lớp tuần sau', starts_at: '2026-10-23T08:00:00+00:00',
+          ends_at: '2026-10-23T11:00:00+00:00', duration_minutes: 180,
+          event_kind: 'class', editable: false,
+        }],
+      },
+    };
+
+    render(view('/plan?reanalyze=progress&taskId=t1'));
+    await waitFor(() => expect(fixture.generate).toHaveBeenCalledOnce());
+
+    expect(fixture.generate.mock.calls[0][0]).toMatchObject({
+      weekStart: '2026-10-18',
+      horizonEnd: '2026-10-25',
+      unavailable: expect.arrayContaining([
+        expect.objectContaining({ date: '2026-10-23', start: '15:00', end: '18:00', source: 'lms' }),
+      ]),
+    });
+    expect(fixture.generate.mock.calls[0][0].tasks.map((task: { taskId: string }) => task.taskId)).toEqual(['t1', 't2']);
+  });
   it('turns a confirmed Reflect decision into a Plan draft without applying it', async () => {
     const applied = fixture.state.plan;
     render(<StrictMode>{view('/plan?reanalyze=reflection&scope=activity&taskId=t1')}</StrictMode>);
@@ -62,6 +93,21 @@ describe('student calendar editing workflow', () => {
     expect(fixture.propose).not.toHaveBeenCalled();
     expect(fixture.confirm).not.toHaveBeenCalled();
     expect(fixture.state.plan).toBe(applied);
+  });
+  it('keeps a completed task in an activity Reflect re-plan as zero baseline review work', async () => {
+    fixture.state.sessions = [{
+      id: 'done-t2', taskId: 't2', blockId: 'b2', date: '2026-10-05', minutes: 12,
+      source: 'timer', plannedMin: 60, workResult: 'planned_part_done', remainingMinutes: 0,
+    }];
+    fixture.state.tasks[1].loggedMin = 12;
+
+    render(view('/plan?reanalyze=reflection&scope=activity&taskId=t2'));
+    await waitFor(() => expect(fixture.generate).toHaveBeenCalledTimes(1));
+
+    expect(fixture.generate.mock.calls[0][0].tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: 't2', remainingMin: 0 }),
+    ]));
+    expect(fixture.generate.mock.calls[0][0].replanContext.taskIds).toEqual(['t2']);
   });
   it('turns a confirmed weekly Reflect into a different draft without replacing the applied plan', async () => {
     const applied = fixture.state.plan;
@@ -93,6 +139,61 @@ describe('student calendar editing workflow', () => {
     await waitFor(() => expect(fixture.board.items.some(item => item.entityId === 'draft-b')).toBe(true));
     expect(fixture.generate).toHaveBeenCalledTimes(1);
   });
+  it('shows a persisted AI draft by default instead of falling back to the applied schedule', () => {
+    fixture.state.planDraft = {
+      input: { goal: '', tasks: [], availability: [], unavailable: [], preferred: 'evening' },
+      blocks: [{ id: 'new-draft-block', taskId: 't2', date: '2026-10-09', start: '12:00', end: '13:00' }],
+      createdAt: 'persisted-draft',
+      reasons: [], assumptions: [],
+      feasibility: { feasible: true, availableMin: 300, requiredMin: 60, remainingMin: 240, deficitMin: 0, shortfalls: [] },
+    };
+
+    render(view());
+
+    expect(screen.getByText('Xem bản nháp')).toHaveAttribute('aria-pressed', 'true');
+    expect(fixture.board.items.some((item) => item.entityId === 'new-draft-block')).toBe(true);
+    expect(fixture.board.items.some((item) => item.entityId === 'b1')).toBe(false);
+  });
+  it('does not jump to the draft week after AI analysis', async () => {
+    fixture.generate.mockResolvedValueOnce({
+      input: { goal: '', tasks: [], availability: [], unavailable: [], preferred: 'evening', weekStart: '2026-10-12' },
+      weekStart: '2026-10-12',
+      blocks: [{ id: 'future-draft', taskId: 't2', date: '2026-10-12', start: '11:00', end: '12:00' }],
+      createdAt: 'future-replan', reasons: [], assumptions: [],
+      feasibility: { feasible: true, availableMin: 300, requiredMin: 60, remainingMin: 240, deficitMin: 0, shortfalls: [] },
+    });
+
+    render(view('/plan?reanalyze=progress&taskId=t2'));
+    await waitFor(() => expect(fixture.generate).toHaveBeenCalledOnce());
+
+    expect(screen.getByLabelText('Chọn ngày')).toHaveValue('2026-10-05');
+  });
+  it('requires opening the draft before showing its apply action', () => {
+    fixture.state.planDraft = {
+      input: { goal: '', tasks: [], availability: [], unavailable: [], preferred: 'evening' },
+      blocks: [{ id: 'new-draft-block', taskId: 't2', date: '2026-10-09', start: '12:00', end: '13:00' }],
+      createdAt: 'persisted-draft', reasons: [], assumptions: [],
+      feasibility: { feasible: true, availableMin: 300, requiredMin: 60, remainingMin: 240, deficitMin: 0, shortfalls: [] },
+    };
+
+    render(view());
+    expect(screen.getByRole('button', { name: 'Áp dụng kế hoạch' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lịch đang dùng' }));
+    expect(screen.queryByRole('button', { name: 'Áp dụng kế hoạch' })).not.toBeInTheDocument();
+  });
+  it('keeps longer-horizon tentative sessions visible after the plan is applied', () => {
+    fixture.state.provisionalBlocks = [{
+      id: 'next-week-preview', taskId: 't2', date: '2026-10-12', start: '18:00', end: '19:00', status: 'tentative',
+    }];
+
+    render(view());
+
+    expect(fixture.board.items.some((item) => item.entityId === 'next-week-preview')).toBe(false);
+    fireEvent.click(screen.getByLabelText('Chọn ngày'));
+    fireEvent.change(screen.getByLabelText('Chọn ngày'), { target: { value: '2026-10-12' } });
+    expect(fixture.board.items.some((item) => item.entityId === 'next-week-preview')).toBe(true);
+  });
   it('unpins affected future placements for re-plan but preserves elapsed history', async () => {
     fixture.state.plan!.blocks[0].placementSource = 'student';
     fixture.state.plan!.blocks.push({ id: 'history', taskId: 't1', date: '2026-10-04', start: '10:00', end: '11:00', status: 'history' });
@@ -121,6 +222,20 @@ describe('student calendar editing workflow', () => {
       expect.objectContaining({ source: 'routine', category: 'sleep', start: '00:00', end: '07:00' }),
     ]));
   });
+  it('re-analyzes changed break preferences without mutating the applied plan', async () => {
+    const applied = fixture.state.plan;
+    fixture.state.studyPreferences = { sessionMinutes: 90, breakMinutes: 20, checkpointMinutes: 5,
+      adaptiveSuggestionsEnabled: true, activityRhythms: [] };
+
+    render(view('/plan?reanalyze=preferences&scope=weekly'));
+    await waitFor(() => expect(fixture.generate).toHaveBeenCalledOnce());
+
+    expect(fixture.generate.mock.calls[0][0].studyPreferences.breakMinutes).toBe(20);
+    expect(fixture.generate.mock.calls[0][0].replanContext).toEqual({
+      trigger: 'preferences', scope: 'weekly', taskIds: [],
+    });
+    expect(fixture.state.plan).toBe(applied);
+  });
   it('does not reselect expired tasks from historical pins or the fixed demo start', async () => {
     vi.setSystemTime(new Date('2026-10-10T11:00:00+07:00'));
     fixture.state.tasks.push({ ...fixture.state.tasks[1], id: 'same-day-expired', dueAt: '2026-10-10T10:45:00+07:00' });
@@ -145,8 +260,20 @@ describe('student calendar editing workflow', () => {
 
     await waitFor(() => expect(fixture.propose).toHaveBeenCalledOnce());
     expect(fixture.generate).not.toHaveBeenCalled();
-    expect(await screen.findByRole('dialog', { name: /Mục tiêu tuần AI đề xuất/i })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: /Bước 1 · Đặt mục tiêu tuần/i })).toBeInTheDocument();
     expect(screen.getByDisplayValue('Phân tích lại Python')).toBeInTheDocument();
+  });
+  it('uses the selected course as the scope for weekly goals and task decomposition', async () => {
+    fixture.propose.mockResolvedValueOnce([{ id: 'goal-1', title: 'Hoàn thành Quan hệ hai ngôi', taskIds: ['t1'], confirmed: true }]);
+    render(view());
+    fireEvent.click(screen.getByRole('button', { name: 'Lọc và hiển thị lịch' }));
+    fireEvent.change(screen.getByLabelText('Lọc lịch theo môn học'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: /AI (?:lập kế hoạch|phân tích lại)/ }));
+
+    await waitFor(() => expect(fixture.propose).toHaveBeenCalledOnce());
+    expect(fixture.propose.mock.calls[0][0].map((task: { id: string }) => task.id)).toEqual(['t1']);
+    expect(await screen.findByRole('dialog', { name: /Bước 1 · Đặt mục tiêu tuần/i })).toBeInTheDocument();
+    expect(screen.getByText(/Môn đang lọc cũng là phạm vi AI đặt mục tiêu và chia nhiệm vụ/)).toBeInTheDocument();
   });
   it('labels expired cached capacity stale instead of repeating a nine-hour future shortage', () => {
     vi.setSystemTime(new Date('2026-10-10T11:00:00+07:00'));
@@ -224,35 +351,29 @@ describe('student calendar editing workflow', () => {
     ['self_study', 'Giờ tự học'],
     ['sleep', 'Ngủ'],
     ['other', 'Bận khác'],
-  ] as const)('does not add %s to elapsed calendar time', (category, label) => {
-    const before = fixture.state.unavailable;
+  ] as const)('allows adding %s to elapsed calendar time as editable history', (category, label) => {
     render(view());
     if (fixture.board.readOnly) throw new Error('Expected editable calendar');
 
     fixture.board.onAddBusy('2026-10-04', '18:00', category, label);
 
-    expect(fixture.state.unavailable).toBe(before);
-    expect(fixture.state.calendarDraft).toBeNull();
-    expect(fixture.toast).toHaveBeenLastCalledWith({
-      tone: 'warning',
-      title: 'Không thể thêm hoạt động',
-      description: expect.stringContaining('thời gian đã qua'),
-    });
+    expect(fixture.state.unavailable).toContainEqual(expect.objectContaining({
+      date: '2026-10-04', start: '18:00', end: '19:00', category, label,
+    }));
+    expect(fixture.state.calendarDraft).toMatchObject({ needsAnalysis: true });
+    expect(fixture.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Không thể thêm hoạt động' }));
   });
-  it('does not move an existing personal activity into the past', () => {
+  it('moves an existing personal activity into the past and keeps it editable', () => {
     render(view());
     if (fixture.board.readOnly) throw new Error('Expected editable calendar');
 
     fixture.board.onMoveBusy('meal', '2026-10-05', '07:00');
 
     expect(fixture.state.unavailable.find((slot) => slot.id === 'meal')).toMatchObject({
-      date: '2026-10-08', start: '13:00', end: '14:00',
+      date: '2026-10-05', start: '07:00', end: '08:00',
     });
-    expect(fixture.state.calendarDraft).toBeNull();
-    expect(fixture.toast).toHaveBeenLastCalledWith(expect.objectContaining({
-      title: 'Không thể dời hoạt động',
-      description: expect.stringContaining('thời gian đã qua'),
-    }));
+    expect(fixture.state.calendarDraft).toMatchObject({ needsAnalysis: true });
+    expect(fixture.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Không thể dời hoạt động' }));
   });
   it('shows the API cause and retry delay when plan analysis is rate limited', async () => {
     const error = Object.assign(new Error('Bạn thao tác quá nhanh.'), {
@@ -266,8 +387,8 @@ describe('student calendar editing workflow', () => {
     fixture.propose.mockResolvedValueOnce([{ id: 'goal-1', title: 'Hoàn thành bài', taskIds: ['t1'], confirmed: true, analysisSource: 'model' }]);
     render(view());
     fireEvent.click(screen.getByRole('button', { name: /AI (?:lập kế hoạch|phân tích lại)/ }));
-    await screen.findByRole('dialog', { name: /Mục tiêu tuần AI đề xuất/i });
-    fireEvent.click(screen.getByRole('button', { name: 'Xác nhận và lập lịch' }));
+    await screen.findByRole('dialog', { name: /Bước 1 · Đặt mục tiêu tuần/i });
+    fireEvent.click(screen.getByRole('button', { name: 'Xác nhận mục tiêu & chia nhỏ nhiệm vụ' }));
     await waitFor(() => expect(fixture.toast).toHaveBeenLastCalledWith(expect.objectContaining({
       title: 'AI chưa thể phân tích kế hoạch',
       description: expect.stringContaining('7 giây'),
@@ -290,6 +411,13 @@ describe('student calendar editing workflow', () => {
     act(() => { if (!fixture.board.readOnly) fixture.board.onOpenBlock('b1'); });
     expect(screen.getByRole('button', { name: 'Bắt đầu Do' })).toBeInTheDocument();
   });
+  it('keeps a future Do visible but disables starting it before its prerequisite lesson', () => {
+    fixture.state.plan!.blocks[0].earliestStartAt = '2026-10-08T09:00:00+07:00';
+    render(view());
+    act(() => { if (!fixture.board.readOnly) fixture.board.onOpenBlock('b1'); });
+    expect(screen.getByRole('button', { name: 'Bắt đầu Do' })).toBeDisabled();
+    expect(screen.getByText(/chỉ mở sau khi buổi học liên quan kết thúc/)).toBeVisible();
+  });
   it('requires confirmation for a moved session, not for all sessions', () => {
     fixture.state = reducer(fixture.state, { type: 'SAVE_CALENDAR_DRAFT', blocks: fixture.state.plan!.blocks.map((b) => b.id === 'b1' ? { ...b, start: '10:15', end: '11:15' } : b) });
     render(view());
@@ -297,14 +425,70 @@ describe('student calendar editing workflow', () => {
     expect(screen.getByRole('button', { name: 'Bắt đầu Do' })).toBeDisabled();
     expect(screen.getByText(/Ca này chưa được xác nhận/)).toBeInTheDocument();
   });
-  it('keeps the applied calendar accessible while a different AI draft awaits review', () => {
+  it('confirms a valid exact-time edit immediately so the current session can start', () => {
+    const mounted = render(view());
+    act(() => { if (!fixture.board.readOnly) fixture.board.onOpenBlock('b1'); });
+    fireEvent.change(screen.getByLabelText('Kết thúc'), { target: { value: '11:10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu giờ chính xác' }));
+
+    expect(fixture.state.plan?.blocks.find((block) => block.id === 'b1')?.end).toBe('11:10');
+    expect(fixture.state.calendarDraft).toMatchObject({ needsAnalysis: true });
+    expect(fixture.state.planHistory[0].blocks.find((block) => block.id === 'b1')?.end).toBe('11:00');
+
+    mounted.rerender(view());
+    act(() => { if (!fixture.board.readOnly) fixture.board.onOpenBlock('b1'); });
+    expect(screen.getByRole('button', { name: 'Bắt đầu Do' })).toBeEnabled();
+    expect(screen.queryByText(/Ca này chưa được xác nhận/)).not.toBeInTheDocument();
+  });
+  it('opens a different AI draft first while keeping the applied calendar accessible', () => {
     fixture.state.planDraft = { input: { goal: '', tasks: [], availability: [], unavailable: [], preferred: 'evening' },
       blocks: [{ ...fixture.state.plan!.blocks[0], id: 'new' }], createdAt: '', reasons: [], assumptions: [],
       feasibility: { feasible: false, availableMin: 60, requiredMin: 600, remainingMin: -540, deficitMin: 540, shortfalls: [{ taskId: 't1', missingMin: 540 }] } };
     render(view());
+    expect(fixture.board.items.some(b => b.entityId === 'new')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Lịch đang dùng' }));
     expect(fixture.board.items.some(b => b.entityId === 'b1')).toBe(true);
     act(() => { if (!fixture.board.readOnly) fixture.board.onOpenBlock('b1'); });
     expect(screen.getByRole('button', { name: 'Bắt đầu Do' })).toBeEnabled();
+  });
+  it('lets the learner resize the AI explanation pane without hiding the calendar', () => {
+    fixture.state.planDraft = { input: { goal: '', tasks: [], availability: [], unavailable: [], preferred: 'evening' },
+      blocks: [{ ...fixture.state.plan!.blocks[0], id: 'draft-resize' }], createdAt: 'draft-resize', reasons: [], assumptions: [],
+      feasibility: { feasible: true, availableMin: 240, requiredMin: 60, remainingMin: 180, deficitMin: 0, shortfalls: [] } };
+
+    render(view());
+    const separator = screen.getByRole('separator', { name: 'Điều chỉnh chiều cao phần AI giải thích' });
+    const initialHeight = Number(separator.getAttribute('aria-valuenow'));
+    fireEvent.keyDown(separator, { key: 'ArrowDown' });
+
+    expect(Number(separator.getAttribute('aria-valuenow'))).toBe(initialHeight + 24);
+    expect(screen.getByTestId('board')).toBeInTheDocument();
+
+    fireEvent.keyDown(separator, { key: 'Home' });
+    expect(Number(separator.getAttribute('aria-valuenow'))).toBe(46);
+    expect(screen.getByText('Phân tích AI')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Mở rộng' }));
+    expect(Number(separator.getAttribute('aria-valuenow'))).toBeGreaterThan(46);
+  });
+  it('keeps resizing when the pointer leaves the explanation separator', () => {
+    fixture.state.planDraft = { input: { goal: '', tasks: [], availability: [], unavailable: [], preferred: 'evening' },
+      blocks: [{ ...fixture.state.plan!.blocks[0], id: 'draft-pointer-resize' }], createdAt: 'draft-pointer-resize', reasons: [], assumptions: [],
+      feasibility: { feasible: true, availableMin: 240, requiredMin: 60, remainingMin: 180, deficitMin: 0, shortfalls: [] } };
+    render(view());
+    const separator = screen.getByRole('separator', { name: 'Điều chỉnh chiều cao phần AI giải thích' });
+    const initialHeight = Number(separator.getAttribute('aria-valuenow'));
+    const down = createEvent.pointerDown(separator, { clientY: 100, button: 0 });
+    Object.defineProperties(down, { pointerId: { value: 7 }, pointerType: { value: 'mouse' }, clientY: { value: 100 } });
+    fireEvent(separator, down);
+    const move = createEvent.pointerMove(window, { clientY: 180 });
+    Object.defineProperties(move, { pointerId: { value: 7 }, clientY: { value: 180 } });
+    fireEvent(window, move);
+    const up = createEvent.pointerUp(window, { clientY: 180 });
+    Object.defineProperties(up, { pointerId: { value: 7 }, clientY: { value: 180 } });
+    fireEvent(window, up);
+
+    expect(Number(separator.getAttribute('aria-valuenow'))).toBe(initialHeight + 80);
+    expect(separator).not.toHaveClass('is-resizing');
   });
   it('requires an explicit partial review and stores only the backend-confirmed subset with the shortfall', async () => {
     const block = { ...fixture.state.plan!.blocks[0], id: 'new' };

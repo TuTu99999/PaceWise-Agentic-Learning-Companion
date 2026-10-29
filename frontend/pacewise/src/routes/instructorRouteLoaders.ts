@@ -2,7 +2,6 @@ const loadOverview = () => import('../pages/instructor/InstructorOverviewPage');
 const loadSchedule = () => import('../pages/instructor/InstructorSchedulePage');
 const loadAssessment = () => import('../pages/instructor/AssessmentPage');
 const loadAssessmentEdit = () => import('../pages/instructor/AssessmentEditPage');
-const loadReviewQueue = () => import('../pages/instructor/ReviewQueuePage');
 const loadTasks = () => import('../pages/instructor/InstructorTasksPage');
 const loadProfile = () => import('../pages/instructor/InstructorProfilePage');
 const loadCourses = () => import('../pages/instructor/InstructorCoursesPage');
@@ -12,7 +11,6 @@ export const instructorRouteLoaders = {
   schedule: loadSchedule,
   assessment: loadAssessment,
   assessmentEdit: loadAssessmentEdit,
-  reviewQueue: loadReviewQueue,
   tasks: loadTasks,
   profile: loadProfile,
   courses: loadCourses,

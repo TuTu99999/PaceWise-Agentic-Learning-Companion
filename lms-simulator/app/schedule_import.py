@@ -240,8 +240,6 @@ def make_preview(db, user_id, payload):
             if row.sheet == "Lessons":
                 for index in range(item.repeat_count):
                     start, end = item.starts_at + timedelta(weeks=index), item.ends_at + timedelta(weeks=index)
-                    if start <= now < end:
-                        raise ValueError("Không thể nhập buổi học đang diễn ra.")
                     if any(start < right and end > left for _, left, right in intervals):
                         raise ValueError("Trùng buổi học hiện có hoặc dòng khác; đổi giờ hoặc chọn thay lịch.")
                     intervals.append((row.course_id, start, end))
@@ -249,8 +247,6 @@ def make_preview(db, user_id, payload):
                         counts["historical_lessons"] += 1
                 counts["lessons"] += item.repeat_count
             elif row.sheet == "Tasks":
-                if item.due_at <= now:
-                    raise ValueError("Deadline phải ở tương lai.")
                 counts["tasks"] += 1
             elif row.sheet == "Weights":
                 counts["weights"] += 1

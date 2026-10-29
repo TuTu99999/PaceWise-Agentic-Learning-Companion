@@ -3,10 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DurableStudySession } from '../types';
 import { resetStudySessionContinuityForTests } from '../utils/studySessionContinuity';
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), start: vi.fn(), update: vi.fn(), dispatch: vi.fn() }));
-vi.mock('../services/api', () => ({ ApiError: class extends Error {}, getStudyTimer: mocks.get,
+const mocks = vi.hoisted(() => ({ get: vi.fn(), start: vi.fn(), update: vi.fn(), dispatch: vi.fn(),
+  state: { activeSession: null } as { activeSession: null | { id: string; blockId: string; taskId: string; version: number; accumulatedMs: number; runningSince: number | null } } }));
+vi.mock('../services/api', () => ({ ApiError: class extends Error {
+    constructor(public code: string, message: string) { super(message); }
+  }, getStudyTimer: mocks.get,
   startStudyTimer: mocks.start, updateStudyTimer: mocks.update }));
-vi.mock('../store/AppStore', () => ({ useAppStore: () => ({ dispatch: mocks.dispatch }) }));
+vi.mock('../store/AppStore', () => ({ useAppStore: () => ({ state: mocks.state, dispatch: mocks.dispatch }) }));
+import { ApiError } from '../services/api';
 import { useDurableStudyTimer } from './useDurableStudyTimer';
 
 const row: DurableStudySession = { id: 'SS-1', taskId: '1:a', courseId: '1', blockId: 'b1', version: 1,
@@ -15,12 +19,16 @@ const row: DurableStudySession = { id: 'SS-1', taskId: '1:a', courseId: '1', blo
 beforeEach(() => {
   resetStudySessionContinuityForTests();
   vi.useFakeTimers(); vi.setSystemTime(new Date(row.checkpoint_at)); vi.clearAllMocks();
+  mocks.state.activeSession = null;
   mocks.get.mockResolvedValue({ session: null }); mocks.start.mockResolvedValue({ ...row });
   mocks.update.mockImplementation(async (_id, command) => ({ ...row, version: command.expectedVersion + 1,
     status: command.action === 'pause' || command.action === 'recover' ? 'paused' : 'running',
     observed_seconds: command.action === 'recover' ? 60 : 80, unobserved_gap: command.action === 'recover' }));
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  vi.useRealTimers();
+});
 describe('durable timer lifecycle', () => {
   it('recovers a running checkpoint as paused without counting time away', async () => {
     mocks.get.mockResolvedValue({ session: row });
@@ -40,6 +48,46 @@ describe('durable timer lifecycle', () => {
     expect(mocks.update.mock.calls.every(([, command]) => command.action !== 'pause')).toBe(true);
     const activeDispatches = mocks.dispatch.mock.calls.filter(([command]) => command.type === 'SET_DURABLE_SESSION');
     expect(activeDispatches).toHaveLength(2); // initial empty + start; no workspace write every heartbeat
+  });
+  it('checkpoints immediately before the browser tab is backgrounded', async () => {
+    const { result } = renderHook(() => useDurableStudyTimer('1', 'b1', true));
+    await act(async () => {});
+    await act(async () => { await result.current.start(); });
+    mocks.update.mockClear();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); await Promise.resolve(); });
+    expect(mocks.update).toHaveBeenCalledWith('SS-1', expect.objectContaining({ action: 'checkpoint' }));
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  });
+  it('shows the mirrored elapsed time while restoring the authoritative server checkpoint', () => {
+    vi.setSystemTime(new Date('2026-10-10T08:00:05Z'));
+    mocks.state.activeSession = { id: row.id, blockId: row.blockId, taskId: row.taskId, version: row.version,
+      accumulatedMs: 60_000, runningSince: new Date(row.checkpoint_at).getTime() };
+    mocks.get.mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useDurableStudyTimer('1', 'b1', true));
+    expect(result.current.elapsed).toBe(65_000);
+  });
+  it('silently reconciles an automatic checkpoint conflict instead of showing an error', async () => {
+    const { result } = renderHook(() => useDurableStudyTimer('1', 'b1', true));
+    await act(async () => {});
+    await act(async () => { await result.current.start(); });
+    mocks.update.mockRejectedValueOnce(new ApiError('CONFLICT', 'Session changed in another tab; reload its checkpoint'));
+    mocks.get.mockResolvedValue({ session: { ...row, version: 2, observed_seconds: 65 } });
+    await act(async () => { await result.current.act('checkpoint'); });
+    expect(result.current.session?.version).toBe(2);
+    expect(result.current.elapsed).toBe(65_000);
+    expect(result.current.error).toBe('');
+  });
+  it('retries a user action once with the reconciled server version', async () => {
+    const { result } = renderHook(() => useDurableStudyTimer('1', 'b1', true));
+    await act(async () => {});
+    await act(async () => { await result.current.start(); });
+    mocks.update.mockRejectedValueOnce(new ApiError('CONFLICT', 'stale version'));
+    mocks.get.mockResolvedValue({ session: { ...row, version: 2, observed_seconds: 65 } });
+    await act(async () => { await result.current.act('pause'); });
+    expect(mocks.update).toHaveBeenLastCalledWith('SS-1', expect.objectContaining({ action: 'pause', expectedVersion: 2 }));
+    expect(result.current.session?.status).toBe('paused');
+    expect(result.current.error).toBe('');
   });
   it('keeps a running session continuous across an internal route unmount', async () => {
     const first = renderHook(() => useDurableStudyTimer('1', 'b1', true));

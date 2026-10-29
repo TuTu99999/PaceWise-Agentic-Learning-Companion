@@ -229,7 +229,10 @@ async def test_mixed_word_upload_keeps_teacher_original_and_indexes_public_deriv
     with SessionLocal() as db:
         jobs = db.scalars(select(LmsFileIndex)).all()
         assert len(jobs) == 1
-        assert json.loads(jobs[0].metadata_json)["content_role"] == "student_assignment_brief"
+        metadata = json.loads(jobs[0].metadata_json)
+        assert metadata["content_role"] == "student_assignment_brief"
+        assert metadata["planning_chapter"] == "Bài tập theo chương"
+        assert metadata["course_code"] == "N101"
 
 
 @pytest.mark.asyncio
@@ -432,6 +435,58 @@ async def test_native_task_material_module_mapping_and_summary(client, native):
     assert assignments[0]["title"] == "Task chapter 3"
     assert modules[0]["name"] == "Chapter 3"
     assert (await client_source.service_get("/api/pacewise/v1/events", {"after_id": 0}))
+
+
+@pytest.mark.asyncio
+async def test_teacher_deletes_resource_and_unlinks_every_live_reference(client, native):
+    from src.course_source.models import (
+        Assignment,
+        CalendarEvent,
+        CourseModule,
+        IntegrationEvent,
+        ModuleItem,
+        Resource,
+        TeacherTaskMetadata,
+    )
+
+    upload_dir = Path(native.course_upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stored = upload_dir / "course-1-delete-me.docx"
+    stored.write_bytes(b"PK\x03\x04test")
+    now = datetime.now(UTC)
+    with CourseSession() as db:
+        resource = Resource(course_id=1, title="Delete me.docx", kind="assignment_guide",
+                            source_url="/api/files/course-1-delete-me.docx")
+        assignment = Assignment(course_id=1, title="Linked task", description="", due_at=now + timedelta(days=1),
+                                points_possible=10, published=True)
+        module = CourseModule(course_id=1, name="Chapter 1", published=True)
+        db.add_all([resource, assignment, module])
+        db.flush()
+        identifier = resource.id
+        db.add(ModuleItem(module_id=module.id, title=resource.title, item_type="resource", content_id=identifier,
+                          published=True))
+        db.add(TeacherTaskMetadata(assignment_id=assignment.id, kind="assignment",
+                                   resource_ids_json=json.dumps([identifier])))
+        db.add(CalendarEvent(user_id=2, course_id=1, title="Linked lesson", starts_at=now + timedelta(days=1),
+                             ends_at=now + timedelta(days=1, hours=1), event_kind="class",
+                             description="course-activity-v1; " + json.dumps({"resource_ids": [identifier]})))
+        db.commit()
+
+    headers = await sign_in(client)
+    response = await client.delete(f"/api/v1/instructor/manage/courses/1/resources/{identifier}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "deleted"}
+    assert not stored.exists()
+    with CourseSession() as db:
+        assert db.get(Resource, identifier) is None
+        assert db.scalar(select(ModuleItem).where(ModuleItem.item_type == "resource",
+                                                  ModuleItem.content_id == identifier)) is None
+        metadata = db.scalar(select(TeacherTaskMetadata).where(TeacherTaskMetadata.assignment_id == assignment.id))
+        assert json.loads(metadata.resource_ids_json) == []
+        event = db.scalar(select(CalendarEvent).where(CalendarEvent.title == "Linked lesson"))
+        assert json.loads(event.description.removeprefix("course-activity-v1; "))["resource_ids"] == []
+        assert db.scalar(select(IntegrationEvent).where(IntegrationEvent.event_type == "resource.deleted",
+                                                        IntegrationEvent.aggregate_id == str(identifier)))
 
 
 @pytest.mark.asyncio

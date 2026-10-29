@@ -25,7 +25,11 @@ from src.security import (
     require_instructor,
 )
 from src.services.adoption_metrics import adoption_comparison, instant
-from src.services.instructor_metrics import completion_metrics, topic_metrics
+from src.services.instructor_metrics import (
+    completion_metrics,
+    course_weekly_timeline,
+    topic_metrics,
+)
 from src.services.instructor_workspace import (
     fold_instructor_workspace,
     pacewise_calendar_items,
@@ -53,6 +57,17 @@ class CourseSwitchRequest(BaseModel):
 
 def _client(settings: Settings) -> LMSClient:
     return LMSClient(settings)
+
+
+async def _service_get_many(client, requests: list[tuple[str, dict | None]]) -> list:
+    """Reuse one bounded HTTP/ASGI pool for an aggregate snapshot.
+
+    Test doubles and external adapters only need ``service_get``; the real
+    client takes the pooled fast path.
+    """
+    if isinstance(client, LMSClient):
+        return await client.service_get_many(requests)
+    return await gather(*(client.service_get(path, params) for path, params in requests))
 
 
 def _parse_lms_datetime(value: object) -> datetime | None:
@@ -173,6 +188,147 @@ def _assignment_risk_summary(
     return rows[:8], at_risk_students
 
 
+def _dashboard_course_summary(
+    course: dict,
+    enrollments: list[dict],
+    assignments: list[dict],
+    submissions: list[dict],
+    *,
+    as_of: datetime,
+    schedule_items: list[dict] | None = None,
+) -> tuple[dict, list[dict], list[dict]]:
+    """Build teacher-authorized, per-student alerts for one selected course."""
+    students = [item for item in enrollments if item.get("role") == "student"]
+    student_ids = {int(item["user_id"]) for item in students}
+    accepted = {
+        (int(item.get("assignment_id") or 0), int(item.get("user_id") or 0))
+        for item in submissions
+        if _accepted_submission(item) or item.get("workflow_state") == "excused" or item.get("excused")
+    }
+    urgent_until = as_of + timedelta(hours=72)
+    published = [item for item in assignments if item.get("published", True)]
+    alerts: list[dict] = []
+    overdue_students = 0
+
+    for student in students:
+        student_id = int(student["user_id"])
+        overdue = upcoming = 0
+        nearest_due: datetime | None = None
+        for assignment in published:
+            assignment_id = int(assignment.get("id") or 0)
+            if (assignment_id, student_id) in accepted:
+                continue
+            due_at = instant(
+                (assignment.get("student_due_dates") or {}).get(
+                    str(student_id), assignment.get("due_at")
+                )
+            )
+            if due_at is None:
+                continue
+            if due_at < as_of:
+                overdue += 1
+            elif due_at <= urgent_until:
+                upcoming += 1
+                nearest_due = min(nearest_due, due_at) if nearest_due else due_at
+        if not overdue and not upcoming:
+            continue
+        severity = "high" if overdue >= 2 or (overdue >= 1 and upcoming >= 1) else "warning"
+        overdue_students += int(overdue > 0)
+        alerts.append(
+            {
+                "id": f"{course['id']}:{student_id}",
+                "studentId": str(student_id),
+                "studentName": _display_text(student.get("name"), "Sinh viên"),
+                "courseId": str(course["id"]),
+                "courseCode": _display_text(course.get("code"), f"Môn {course['id']}"),
+                "severity": severity,
+                "overdueCount": overdue,
+                "upcomingCount": upcoming,
+                "nearestDueAt": nearest_due.isoformat() if nearest_due else None,
+            }
+        )
+
+    completion = completion_metrics(published, submissions, student_ids, as_of=as_of)
+    high_risk = sum(item["severity"] == "high" for item in alerts)
+    summary = {
+        "id": str(course["id"]),
+        "code": _display_text(course.get("code"), f"Môn {course['id']}"),
+        "name": _display_text(course.get("name"), "Môn học"),
+        "term": _display_text(course.get("term")),
+        "studentCount": len(student_ids),
+        "highRisk": high_risk,
+        "openWarnings": sum(item["severity"] == "warning" for item in alerts),
+        "overdue": overdue_students,
+        "completionRate": completion["rate"] if completion["total"] else None,
+        "completionCount": completion["count"],
+        "completionTotal": completion["total"],
+    }
+    weeks = (
+        completion["weekly"]
+        if schedule_items is None
+        else course_weekly_timeline(
+            published,
+            submissions,
+            student_ids,
+            schedule_items,
+            as_of=as_of,
+        )
+    )
+    return summary, alerts, weeks
+
+
+def _aggregate_dashboard_weeks(course_weeks: list[list[dict]]) -> list[dict]:
+    totals: dict[str, dict] = {}
+    for weeks in course_weeks:
+        for item in weeks:
+            week_start = str(item["weekStart"])
+            aggregate = totals.setdefault(
+                week_start,
+                {
+                    "week": str(item["week"]),
+                    "weekNumber": item.get("weekNumber"),
+                    "weekStart": week_start,
+                    "weekEnd": str(item["weekEnd"]),
+                    "count": 0,
+                    "total": 0,
+                    "scheduledTotal": 0,
+                    "taskCount": 0,
+                    "lessonCount": 0,
+                    "status": item.get("status"),
+                },
+            )
+            aggregate["count"] += int(item["count"])
+            aggregate["total"] += int(item["total"])
+            aggregate["scheduledTotal"] += int(item.get("scheduledTotal") or 0)
+            aggregate["taskCount"] += int(item.get("taskCount") or 0)
+            aggregate["lessonCount"] += int(item.get("lessonCount") or 0)
+    return [
+        item | {"rate": item["count"] / item["total"] if item["total"] else None}
+        for item in [totals[key] for key in sorted(totals)]
+    ]
+
+
+def _dashboard_current_week(weeks: list[dict], *, as_of: datetime) -> dict:
+    local_date = as_of.astimezone(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+    week_start = local_date - timedelta(days=local_date.weekday())
+    week_end = week_start + timedelta(days=6)
+    current = next(
+        (item for item in weeks if item.get("weekStart") == week_start.isoformat()),
+        None,
+    )
+    return {
+        "weekNumber": current.get("weekNumber") if current else None,
+        "weekStart": week_start.isoformat(),
+        "weekEnd": week_end.isoformat(),
+        "rate": current["rate"] if current else None,
+        "count": current["count"] if current else 0,
+        "total": current["total"] if current else 0,
+        "scheduledTotal": current.get("scheduledTotal", 0) if current else 0,
+        "taskCount": current.get("taskCount", 0) if current else 0,
+        "lessonCount": current.get("lessonCount", 0) if current else 0,
+    }
+
+
 def _rubric_criteria(details: dict) -> list[dict]:
     labels = {
         "understanding": "Hiểu khái niệm",
@@ -188,6 +344,59 @@ def _rubric_criteria(details: dict) -> list[dict]:
         {"name": labels.get(str(key), str(key).replace("_", " ").capitalize()), "score": value}
         for key, value in rubric.items()
     ]
+
+
+def _legacy_canvas_assessment(payload: dict) -> bool:
+    """Hide the retired raw-quiz import path from Assessment design."""
+
+    return str(payload.get("source") or "").strip().casefold() == "canvas quiz"
+
+
+def _assessment_action_item(action: InstructorAction, payload: dict) -> dict:
+    return {
+        "id": action.entity_id,
+        "courseId": str(action.course_id),
+        "topic": payload.get("topic") or "Câu kiểm chứng",
+        "question": payload.get("question") or "",
+        "rubric": payload.get("rubric") or [],
+        "status": payload.get("status") or "draft",
+        "version": max(0, int(payload.get("version") or 0)),
+        "source": payload.get("source") or "",
+        "sourceResourceId": payload.get("sourceResourceId"),
+        "sourceChapter": payload.get("sourceChapter"),
+        "moduleId": payload.get("moduleId"),
+        "answerType": payload.get("answerType") or "open",
+        "knowledgeComponentIds": payload.get("knowledgeComponentIds") or [],
+        "kcProvisional": bool(payload.get("kcProvisional", False)),
+        "assessmentStage": payload.get("assessmentStage"),
+        "assessmentSetId": payload.get("assessmentSetId"),
+        "questionDesign": payload.get("questionDesign"),
+        "hints": payload.get("hints") or [],
+        "assignmentTitle": payload.get("assignmentTitle"),
+        "weekStart": payload.get("weekStart"),
+        "weekEnd": payload.get("weekEnd"),
+        "aiGenerated": bool(payload.get("aiGenerated", False)),
+    }
+
+
+def _assessment_design_items(actions: list[InstructorAction]) -> list[dict]:
+    """Fold the immutable assessment action log without touching the LMS."""
+
+    latest: dict[str, InstructorAction] = {}
+    for action in actions:
+        if action.action_type == "assessment":
+            latest[action.entity_id] = action
+    result = []
+    for action in latest.values():
+        payload = json.loads(action.payload_json or "{}")
+        if (
+            payload.get("status") == "deleted"
+            or _legacy_canvas_assessment(payload)
+            or not str(payload.get("question") or "").strip()
+        ):
+            continue
+        result.append(_assessment_action_item(action, payload))
+    return result
 
 
 def _evidence_details(item: dict) -> dict:
@@ -516,13 +725,13 @@ async def _course_snapshot(
     course_id = int(course["id"])
     user_params = {"user_id": session.user_id}
     scoped_params = {**user_params, "summary": True} if session.role == "student" else {"summary": True}
-    assignments, submissions, modules, files, appointments = await gather(
-        client.service_get(f"/api/pacewise/v1/courses/{course_id}/assignments", scoped_params),
-        client.service_get(f"/api/pacewise/v1/courses/{course_id}/submissions", scoped_params),
-        client.service_get(f"/api/pacewise/v1/courses/{course_id}/modules", scoped_params),
-        client.service_get(f"/api/pacewise/v1/courses/{course_id}/files", user_params),
-        client.service_get(f"/api/pacewise/v1/courses/{course_id}/appointment-groups", scoped_params),
-    )
+    assignments, submissions, modules, files, appointments = await _service_get_many(client, [
+        (f"/api/pacewise/v1/courses/{course_id}/assignments", scoped_params),
+        (f"/api/pacewise/v1/courses/{course_id}/submissions", scoped_params),
+        (f"/api/pacewise/v1/courses/{course_id}/modules", scoped_params),
+        (f"/api/pacewise/v1/courses/{course_id}/files", user_params),
+        (f"/api/pacewise/v1/courses/{course_id}/appointment-groups", scoped_params),
+    ])
     submissions_by_assignment = {int(item["assignment_id"]): item for item in submissions}
     tasks = [
         _task_payload(
@@ -552,11 +761,11 @@ async def _course_snapshot(
         "appointmentGroups": appointments,
     }
     if session.role == "instructor":
-        sections, groups, analytics = await gather(
-            client.service_get(f"/api/pacewise/v1/courses/{course_id}/sections"),
-            client.service_get(f"/api/pacewise/v1/courses/{course_id}/groups"),
-            client.service_get(f"/api/pacewise/v1/courses/{course_id}/analytics"),
-        )
+        sections, groups, analytics = await _service_get_many(client, [
+            (f"/api/pacewise/v1/courses/{course_id}/sections", None),
+            (f"/api/pacewise/v1/courses/{course_id}/groups", None),
+            (f"/api/pacewise/v1/courses/{course_id}/analytics", None),
+        ])
         snapshot.update({"sections": sections, "groups": groups, "analytics": analytics})
     return tasks, snapshot
 
@@ -632,14 +841,19 @@ async def _sync_payload(session: SessionContext, settings: Settings, db: Session
         }
         for course in allowed_courses
     ]
-    planner_items = (
-        await client.service_get(f"/api/pacewise/v1/users/{session.user_id}/planner")
-        if session.role == "student"
-        else []
-    )
-    calendar_items = (
-        await client.service_get(f"/api/pacewise/v1/users/{session.user_id}/calendar")
-    )
+    if session.role == "student":
+        planner_items, calendar_items = await _service_get_many(
+            client,
+            [
+                (f"/api/pacewise/v1/users/{session.user_id}/planner", None),
+                (f"/api/pacewise/v1/users/{session.user_id}/calendar", None),
+            ],
+        )
+    else:
+        planner_items = []
+        calendar_items = await client.service_get(
+            f"/api/pacewise/v1/users/{session.user_id}/calendar"
+        )
     synchronized = await gather(
         *[
             _course_snapshot(client, course, session, planner_items, calendar_items)
@@ -679,7 +893,7 @@ async def _sync_payload(session: SessionContext, settings: Settings, db: Session
         and json.loads(action.payload_json or "{}").get("scope") == "group"
         for action in guidance_actions
     )
-    db.commit()  # Do not retain a main-pool connection during native group/quiz queries.
+    db.commit()  # Do not retain a main-pool connection during native group queries.
     if session.role == "student" and has_group_feedback:
         allowed_group_ids = set()
         group_categories = await client.service_get(
@@ -689,11 +903,6 @@ async def _sync_payload(session: SessionContext, settings: Settings, db: Session
             for group in category.get("groups") or []:
                 if session.user_id in {int(value) for value in group.get("member_ids") or []}:
                     allowed_group_ids.add(str(group["id"]))
-    assessments = []
-    course_quizzes = await gather(*[
-        client.service_get(f"/api/pacewise/v1/courses/{course_id}/quizzes")
-        for course_id in session.course_ids
-    ])
     assessment_actions = db.scalars(
         select(InstructorAction)
         .where(
@@ -705,33 +914,18 @@ async def _sync_payload(session: SessionContext, settings: Settings, db: Session
     latest_assessment_actions = {
         (item.course_id, item.entity_id): item for item in assessment_actions
     }
-    for course_id, quizzes in zip(session.course_ids, course_quizzes, strict=True):
-        for quiz in quizzes:
-            for question in quiz.get("questions", []):
-                assessment_id = f"Q-{question['id']}"
-                action = latest_assessment_actions.get((course_id, assessment_id))
-                payload = json.loads(action.payload_json or "{}") if action else {}
-                if payload.get("status") != "approved":
-                    continue
-                assessments.append(
-                    {
-                        "id": assessment_id,
-                        "courseId": str(course_id),
-                        "topic": quiz["title"],
-                        "question": payload.get("question") or question["prompt"],
-                        "rubric": payload.get("rubric")
-                        or ["Đúng khái niệm", "Giải thích có lập luận", "Không sao chép đáp án"],
-                        "status": "approved",
-                        "version": max(1, int(payload.get("version") or 1)),
-                        "source": payload.get("source") or "Canvas quiz",
-                        "knowledgeComponentIds": payload.get("knowledgeComponentIds") or [],
-                        "assessmentStage": payload.get("assessmentStage"),
-                        "questionDesign": payload.get("questionDesign"),
-                        "hints": payload.get("hints") or [],
-                        "kcProvisional": bool(payload.get("kcProvisional", False)),
-                        "aiGenerated": False,
-                    }
-                )
+    assessments = []
+    for action in latest_assessment_actions.values():
+        payload = json.loads(action.payload_json or "{}")
+        if (
+            payload.get("status") != "approved"
+            or not str(payload.get("question") or "").strip()
+            or _legacy_canvas_assessment(payload)
+        ):
+            continue
+        item = _assessment_action_item(action, payload)
+        item["version"] = max(1, int(item["version"] or 1))
+        assessments.append(item)
     review_resolutions = {}
     if session.role == "student":
         review_cases = db.scalars(
@@ -825,6 +1019,131 @@ async def learning_evidence(
     return await _client(settings).service_get("/api/pacewise/v1/learning-evidence", params)
 
 
+@router.get("/instructor/dashboard")
+async def instructor_dashboard(
+    session: SessionContext = Depends(require_instructor),
+    settings: Settings = Depends(get_settings),
+    course_id: int | None = None,
+) -> dict:
+    """Selected-course instructor dashboard backed only by live LMS facts."""
+    now = datetime.now(UTC)
+    selected_course_id = course_id or session.course_id
+    if not selected_course_id:
+        return {
+            "summary": {"highRisk": 0, "openWarnings": 0, "overdue": 0},
+            "studentAlerts": [],
+            "systemNotices": [],
+            "courses": [],
+            "weeklyCompletion": [],
+            "currentWeek": _dashboard_current_week([], as_of=now),
+            "privacy": {"scope": "individual", "containsDirectIdentifiers": False},
+            "generatedAt": now.isoformat(),
+        }
+    require_course(selected_course_id, session)
+
+    client = _client(settings)
+    all_courses, enrollments, assignments, submissions, management = await client.service_get_many(
+        [
+            ("/api/pacewise/v1/courses", {"user_id": session.user_id, "limit": 500}),
+            (f"/api/pacewise/v1/courses/{selected_course_id}/enrollments", None),
+            (f"/api/pacewise/v1/courses/{selected_course_id}/assignments", {"summary": True}),
+            (f"/api/pacewise/v1/courses/{selected_course_id}/submissions", {"summary": True}),
+            (
+                f"/api/pacewise/v1/teacher/courses/{selected_course_id}",
+                {"user_id": session.user_id},
+            ),
+        ]
+    )
+    allowed = {
+        int(item["id"]): item
+        for item in all_courses
+        if int(item.get("id") or 0) == selected_course_id
+        and item.get("enrollment_role") in {None, "instructor"}
+    }
+    course_ids = [selected_course_id] if selected_course_id in allowed else []
+    if not course_ids:
+        return {
+            "summary": {"highRisk": 0, "openWarnings": 0, "overdue": 0},
+            "studentAlerts": [],
+            "systemNotices": [],
+            "courses": [],
+            "weeklyCompletion": [],
+            "currentWeek": _dashboard_current_week([], as_of=now),
+            "privacy": {"scope": "individual", "containsDirectIdentifiers": False},
+            "generatedAt": now.isoformat(),
+        }
+
+    if not any(
+        int(item.get("user_id") or 0) == session.user_id and item.get("role") == "instructor"
+        for item in enrollments
+    ):
+        raise HTTPException(403, "Current instructor enrollment required")
+    course_summaries: list[dict] = []
+    student_alerts: list[dict] = []
+    course_weeks: list[list[dict]] = []
+    for course_id in course_ids:
+        summary, alerts, weeks = _dashboard_course_summary(
+            allowed[course_id],
+            enrollments,
+            assignments,
+            submissions,
+            as_of=now,
+            schedule_items=management.get("lessons") or [],
+        )
+        course_summaries.append(summary)
+        student_alerts.extend(alerts)
+        course_weeks.append(weeks)
+
+    student_alerts.sort(
+        key=lambda item: (
+            item["severity"] != "high",
+            -int(item["overdueCount"]),
+            -int(item["upcomingCount"]),
+            item["studentName"],
+        )
+    )
+    high_risk = sum(int(item["highRisk"] or 0) for item in course_summaries)
+    open_warnings = sum(int(item["openWarnings"] or 0) for item in course_summaries)
+    overdue = sum(int(item["overdue"] or 0) for item in course_summaries)
+    system_notices = []
+    for item in sorted(course_summaries, key=lambda row: (-int(row["overdue"] or 0), row["code"])):
+        if item["overdue"]:
+            system_notices.append(
+                {
+                    "id": f"overdue:{item['id']}",
+                    "title": f"Rà soát deadline · {item['code']}",
+                    "message": f"{item['overdue']} sinh viên đang có ít nhất một nhiệm vụ quá hạn.",
+                    "at": now.isoformat(),
+                    "tone": "danger",
+                }
+            )
+        elif item["openWarnings"]:
+            system_notices.append(
+                {
+                    "id": f"warning:{item['id']}",
+                    "title": f"Theo dõi deadline · {item['code']}",
+                    "message": f"{item['openWarnings']} sinh viên có deadline cần chú ý trong 72 giờ tới.",
+                    "at": now.isoformat(),
+                    "tone": "warning",
+                }
+            )
+
+    weekly_completion = _aggregate_dashboard_weeks(course_weeks)
+    return {
+        "summary": {"highRisk": high_risk, "openWarnings": open_warnings, "overdue": overdue},
+        "studentAlerts": student_alerts,
+        "systemNotices": system_notices[:4],
+        "courses": course_summaries,
+        "weeklyCompletion": weekly_completion,
+        "currentWeek": _dashboard_current_week(weekly_completion, as_of=now),
+        "privacy": {
+            "scope": "individual",
+            "containsDirectIdentifiers": bool(student_alerts),
+        },
+        "generatedAt": now.isoformat(),
+    }
+
+
 @router.get("/instructor/overview")
 async def instructor_overview(
     session: SessionContext = Depends(require_instructor),
@@ -854,7 +1173,6 @@ async def instructor_overview(
         assignments,
         submissions,
         evidence,
-        quizzes,
         audits,
         outcomes,
     ) = await client.service_get_many([
@@ -862,7 +1180,6 @@ async def instructor_overview(
         (f"/api/pacewise/v1/courses/{course_id}/assignments", {"summary": True}),
         (f"/api/pacewise/v1/courses/{course_id}/submissions", {"summary": True}),
         ("/api/pacewise/v1/learning-evidence", {"course_id": course_id, "limit": 500}),
-        (f"/api/pacewise/v1/courses/{course_id}/quizzes", None),
         ("/api/pacewise/v1/audit-logs", {"course_id": course_id, "limit": 100}),
         (f"/api/pacewise/v1/courses/{course_id}/outcomes", None),
     ])
@@ -893,7 +1210,7 @@ async def instructor_overview(
         student_ids,
         as_of=now,
     )
-    topic_catalog = _topic_catalog(outcomes, quizzes)
+    topic_catalog = _topic_catalog(outcomes, [])
     group = {"id": "all", "name": "Cả lớp", "n": total_students}
     minimum_group_size = int(teacher_workspace["settings"]["minimumGroupSize"])
     if total_students < minimum_group_size:
@@ -982,24 +1299,7 @@ async def instructor_overview(
                 or [{"label": item.entity_id, "type": item.case_type, "id": item.id}],
             }
         )
-    assessments = []
-    for quiz in quizzes:
-        for question in quiz.get("questions", []):
-            assessments.append(
-                {
-                    "id": f"Q-{question['id']}",
-                    "topic": quiz["title"],
-                    "question": question["prompt"],
-                    "rubric": ["Đúng khái niệm", "Giải thích có lập luận", "Không sao chép đáp án"],
-                    "status": "review",
-                    "version": 0,
-                    "source": "Canvas quiz",
-                    "answerType": "exact_text" if question.get("question_type") == "closed" else "open",
-                    "aiGenerated": False,
-                }
-            )
     review_by_id = {item["id"]: item for item in review_queue}
-    assessment_by_id = {item["id"]: item for item in assessments}
     for action in saved_actions:
         payload = json.loads(action.payload_json or "{}")
         if action.action_type == "review" and action.entity_id in review_by_id:
@@ -1008,28 +1308,9 @@ async def instructor_overview(
             review_by_id[action.entity_id].update(
                 {key: payload[key] for key in ("status", "note") if key in payload}
             )
-        if action.action_type == "assessment" and action.entity_id in assessment_by_id:
-            assessment_by_id[action.entity_id].update(
-                {
-                    key: payload[key]
-                    for key in (
-                        "status",
-                        "note",
-                        "question",
-                        "rubric",
-                        "level",
-                        "source",
-                        "answerType",
-                        "version",
-                        "knowledgeComponentIds",
-                        "kcProvisional",
-                        "assessmentStage",
-                        "hints",
-                        "questionDesign",
-                    )
-                    if key in payload
-                }
-            )
+    # Assessment design is authored in PaceWise. LMS quiz questions are never
+    # imported into this workflow, including legacy quiz anchors.
+    assessments = _assessment_design_items(saved_actions)
     audit = [
         {
             "id": str(item["id"]),
@@ -1061,4 +1342,46 @@ async def instructor_overview(
             "minimumGroupSize": minimum_group_size,
             "containsDirectIdentifiers": False,
         },
+    }
+
+
+@router.get("/instructor/assessment-designs")
+def instructor_assessment_designs(
+    session: SessionContext = Depends(require_instructor),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return only the data needed by Assessment design.
+
+    This endpoint is deliberately database-only. Opening the authoring tab must
+    not wait for enrollments, submissions, outcomes, evidence, or audit APIs.
+    """
+
+    if session.course_id <= 0:
+        actions: list[InstructorAction] = []
+    else:
+        actions = list(
+            db.scalars(
+                select(InstructorAction)
+                .where(
+                    InstructorAction.course_id == session.course_id,
+                    InstructorAction.action_type.in_(("assessment", "course_structure", "settings")),
+                )
+                .order_by(InstructorAction.created_at)
+            ).all()
+        )
+    workspace = fold_instructor_workspace(actions)
+    minimum_group_size = int(workspace["settings"]["minimumGroupSize"])
+    return {
+        "classGroups": [],
+        "groupStats": {},
+        "reviewQueue": [],
+        "assessments": _assessment_design_items(actions),
+        "audit": [],
+        "guidance": [],
+        "teacherWorkspace": workspace,
+        "privacy": {
+            "minimumGroupSize": minimum_group_size,
+            "containsDirectIdentifiers": False,
+        },
+        "lmsSummary": None,
     }

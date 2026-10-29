@@ -31,8 +31,8 @@ interface EditableCalendarProps {
   dates: string[];
   selectedDate?: string;
   focusUsefulTime?: boolean;
-  toolsPanel?: 'tasks' | 'personal' | null;
-  onToolsPanelChange?: (panel: 'tasks' | 'personal' | null) => void;
+  toolsPanel?: 'personal' | null;
+  onToolsPanelChange?: (panel: 'personal' | null) => void;
   courses: Course[];
   tasks: Task[];
   items: PlanTimelineItem[];
@@ -151,60 +151,6 @@ export function splitCalendarLayers(items: PlanTimelineItem[]) {
     background: items.filter((item) => item.kind === 'personal_self_study'),
     foreground: items.filter((item) => item.kind !== 'personal_self_study'),
   };
-}
-
-function CourseTaskList({ courses, tasks }: Pick<EditableCalendarProps, 'courses' | 'tasks'>) {
-  const openTasks = tasks.filter((task) => task.status !== 'done');
-  const [selectedTaskId, setSelectedTaskId] = useState(openTasks[0]?.id ?? '');
-  const selectedTask = openTasks.find((task) => task.id === selectedTaskId) ?? openTasks[0];
-  const selectedCourse = courses.find((course) => course.id === selectedTask?.courseId);
-
-  return (
-    <aside className="flex h-full min-h-0 w-full flex-col bg-white" aria-label="Dữ liệu đầu vào kế hoạch">
-      <div className="shrink-0 border-b border-line px-4 py-3">
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted">Nhiệm vụ từ LMS</p>
-        <p className="mt-1 text-xs text-muted">Dữ liệu chỉ đọc; Agent tự chia và xếp lịch học.</p>
-      </div>
-      <div className="auto-hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-8 scroll-pb-8">
-        {selectedTask ? (
-          <>
-            <label className="block text-xs font-bold text-muted">
-              Chọn nhiệm vụ
-              <select
-                value={selectedTask.id}
-                onChange={(event) => setSelectedTaskId(event.target.value)}
-                className="mt-1.5 block h-10 w-full rounded-lg border border-line bg-white px-2 text-xs font-semibold text-ink"
-              >
-                {courses.map((course) => {
-                  const courseTasks = openTasks.filter((task) => task.courseId === course.id);
-                  if (!courseTasks.length) return null;
-                  return (
-                    <optgroup key={course.id} label={`${course.code} · ${course.name}`}>
-                      {courseTasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
-                    </optgroup>
-                  );
-                })}
-              </select>
-            </label>
-
-            <section className="mt-3 rounded-xl border border-line bg-canvas p-3" aria-live="polite">
-              <div className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-primary" aria-hidden="true" />
-                <p className="truncate text-xs font-bold">{selectedCourse?.code ?? 'Môn học'}</p>
-              </div>
-              <p className="mt-2 line-clamp-2 text-sm font-semibold">{selectedTask.title}</p>
-              <dl className="mt-2 space-y-1 text-[11px] text-muted">
-                <div className="flex justify-between gap-2"><dt>Còn lại</dt><dd className="font-semibold text-ink">{Math.max(0, selectedTask.estimateMin - selectedTask.loggedMin)} phút</dd></div>
-                {selectedTask.assignmentGroup?.weight ? <div className="flex justify-between gap-2"><dt>Trọng số nhóm</dt><dd className="font-semibold text-ink">{selectedTask.assignmentGroup.weight}%</dd></div> : null}
-              </dl>
-            </section>
-
-            <p className="mt-2 text-[11px] leading-4 text-muted">Plan đề xuất thứ tự theo deadline, trọng số từ LMS và trạng thái học tập hiện có.</p>
-          </>
-        ) : <p className="text-xs text-muted">Không có nhiệm vụ đang mở.</p>}
-      </div>
-    </aside>
-  );
 }
 
 const PERSONAL_CATEGORIES: Array<{ value: PersonalSlotCategory; label: string; help: string }> = [
@@ -404,7 +350,7 @@ function CalendarEvent({
       aria-pressed={canDrag ? selected : undefined}
       className={`group absolute overflow-hidden rounded-md border border-white/70 border-l-[3px] ${selected ? 'z-50 ring-2 ring-primary ring-offset-1' : ''} ${interactionLocked ? 'pointer-events-none saturate-50' : ''} ${preferredWindow ? `${selected ? 'bg-[#DDF2E3]/95' : 'bg-[#EAF7EE]/75'} border-dashed border-l-[#4E9462] text-[#245D34]` : `px-2 ${compact ? 'py-0' : 'py-1'} shadow-sm hover:z-50 focus:z-50 ${item.source === 'pacewise' ? 'z-20' : 'z-10'} ${sourceStyle[item.source]}`} ${item.scheduleStatus === 'tentative' ? 'border-dashed opacity-80' : ''} ${item.scheduleStatus === 'history' ? 'opacity-55 grayscale' : ''} ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
       style={{ top, height, left: `calc(${leftPercent}% + 3px)`, width: `calc(${widthPercent}% - 5px)` }}
-      title={`${item.start}${item.end ? `–${item.end}` : ''} · ${item.title}${canOpen || canMoveBusy ? ' · Nhấp đúp để mở chi tiết' : ''}`}
+      title={`${item.start}${item.end ? `–${item.end}` : ''} · ${item.title}${item.outsidePreferred ? ' · Ngoài khung ưu tiên' : ''}${canOpen || canMoveBusy ? ' · Nhấp đúp để mở chi tiết' : ''}`}
     >
       {preferredWindow ? (
         <>
@@ -434,6 +380,9 @@ function CalendarEvent({
             <>
               <p className="truncate text-[10px] font-semibold leading-4">{clockOf(displayStart)}{item.end ? `–${clockOf(displayEnd, true)}` : ''}</p>
               <p className={`${height < 48 ? 'truncate' : 'line-clamp-2'} text-[11px] font-bold leading-4`}>{item.courseCode ? `${item.courseCode} · ` : ''}{item.title}{item.scheduleStatus === 'tentative' ? ' · Dự kiến' : ''}</p>
+              {item.outsidePreferred && height >= 58 && (
+                <p className="mt-0.5 truncate text-[9px] font-semibold text-amber-700">Ngoài khung ưu tiên</p>
+              )}
             </>
           )}
         </div>
@@ -499,9 +448,9 @@ export function PlanCalendarBoard(props: PlanCalendarBoardProps) {
   const today = useCalendarToday();
   const { ref: calendarRef, width } = useElementWidth<HTMLElement>();
   const [daySelection, setDaySelection] = useState<{ scope: string; date: string }>();
-  const [localPanel, setLocalPanel] = useState<'tasks' | 'personal' | null>(null);
+  const [localPanel, setLocalPanel] = useState<'personal' | null>(null);
   const panel = props.readOnly ? null : props.toolsPanel === undefined ? localPanel : props.toolsPanel;
-  const setPanel = (value: 'tasks' | 'personal' | null) => {
+  const setPanel = (value: 'personal' | null) => {
     if (!props.readOnly && props.onToolsPanelChange) props.onToolsPanelChange(value);
     else setLocalPanel(value);
   };
@@ -563,11 +512,8 @@ export function PlanCalendarBoard(props: PlanCalendarBoardProps) {
 
   return (
     <div className="calendar-board flex h-full min-h-0 min-w-0 overflow-hidden rounded-2xl border border-line bg-white shadow-card">
-      {editable && <div className="calendar-input-panel w-[232px] shrink-0 border-r border-line"><CourseTaskList courses={editable.courses} tasks={editable.tasks} /></div>}
-
       <section ref={calendarRef} className="calendar-timeline-section flex h-full min-h-0 min-w-0 flex-1 flex-col" aria-label={props.readOnly ? 'Lịch tuần chỉ xem' : 'Lịch tuần kéo thả'}>
         {editable && <div className="calendar-panel-actions flex shrink-0 gap-2 border-b border-line p-2">
-          <button type="button" onClick={() => setPanel('tasks')} className="flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-line text-sm font-semibold"><Icon name="book" size={16} />Nhiệm vụ</button>
           <button type="button" onClick={() => setPanel('personal')} className="flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-primary-light text-sm font-semibold text-primary-ink"><Icon name="plus" size={16} />Lịch cá nhân</button>
         </div>}
         {compact && <div className="shrink-0 border-b border-line bg-white px-1 py-2">
@@ -684,8 +630,7 @@ export function PlanCalendarBoard(props: PlanCalendarBoardProps) {
         </div>
       </section>
       {editable && <div className="calendar-input-panel w-[220px] shrink-0 border-l border-line"><PersonalSchedulePanel onAdd={editable.onOpenPersonal} onOpenRoutine={editable.onOpenRoutine} routineProfile={editable.routineProfile} /></div>}
-      {editable && <Modal open={panel !== null} onClose={() => setPanel(null)} title={panel === 'tasks' ? 'Nhiệm vụ học tập' : 'Thêm lịch cá nhân'}>
-        {panel === 'tasks' && <CourseTaskList courses={editable.courses} tasks={editable.tasks} />}
+      {editable && <Modal open={panel !== null} onClose={() => setPanel(null)} title="Thêm lịch cá nhân">
         {panel === 'personal' && <PersonalSchedulePanel onAdd={(category, label) => { setPanel(null); editable.onOpenPersonal(category, label); }} onOpenRoutine={() => { setPanel(null); editable.onOpenRoutine(); }} routineProfile={editable.routineProfile} />}
       </Modal>}
     </div>

@@ -90,11 +90,18 @@ export function formatDay(date: string, opts: { relative?: boolean; short?: bool
 export const formatRange = (start: Clock, end: Clock) => `${start}–${end}`;
 export const formatDeadline = (date: string) => `${formatDay(date)}, 23:59`;
 
-export function formatDuration(min: number) {
+export function formatDuration(min: number, locale: 'vi' | 'en' = 'vi') {
   const sign = min < 0 ? '−' : '';
   const v = Math.abs(Math.round(min));
   const h = Math.floor(v / 60);
   const m = v % 60;
+  if (locale === 'en') {
+    const hours = `${h} ${h === 1 ? 'hour' : 'hours'}`;
+    const minutes = `${m} ${m === 1 ? 'minute' : 'minutes'}`;
+    if (h === 0) return `${sign}${minutes}`;
+    if (m === 0) return `${sign}${hours}`;
+    return `${sign}${hours} ${minutes}`;
+  }
   if (h === 0) return `${sign}${m} phút`;
   if (m === 0) return `${sign}${h} giờ`;
   return `${sign}${h} giờ ${m} phút`;

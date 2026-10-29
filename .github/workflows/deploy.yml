@@ -42,6 +42,7 @@ jobs:
           CONFIRM_DEPLOY: ${{ inputs.confirm_deploy }}
           AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          OPENAI_SECRET_ID: ${{ vars.OPENAI_SECRET_ID }}
           ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
           ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
         shell: powershell
@@ -62,6 +63,13 @@ jobs:
           }
           if ($env:OPERATION -eq "deploy" -and $env:CONFIRM_DEPLOY -ne "true") {
             throw "Deployment was selected without explicit confirmation."
+          }
+          if ($env:OPERATION -eq "deploy") {
+            @("EC2_INSTANCE_ID", "OPENAI_SECRET_ID") | ForEach-Object {
+              if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))) {
+                throw "Missing required GitHub repository variable: $_"
+              }
+            }
           }
 
   build-and-push:
@@ -96,30 +104,67 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "backend_image=$env:REGISTRY/$env:BACKEND_REPOSITORY`:$env:GITHUB_SHA"
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "frontend_image=$env:REGISTRY/$env:FRONTEND_REPOSITORY`:$env:GITHUB_SHA"
 
+      - name: Check immutable images already exist
+        id: existing
+        shell: powershell
+        run: |
+          function Test-EcrImage([string] $repository) {
+            # GitHub's PowerShell wrapper sets ErrorActionPreference=Stop. AWS
+            # CLI writes service errors to stderr, which PowerShell 5.1 turns
+            # into a terminating NativeCommandError before LASTEXITCODE can be
+            # inspected. Capture that expected stderr under Continue, restore
+            # the runner policy immediately, then classify the AWS exit.
+            $originalErrorActionPreference = $ErrorActionPreference
+            try {
+              $ErrorActionPreference = "Continue"
+              $result = & aws ecr describe-images `
+                --region $env:AWS_REGION `
+                --repository-name $repository `
+                --image-ids imageTag=$env:GITHUB_SHA `
+                --query "imageDetails[0].imageDigest" `
+                --output text `
+                --no-cli-pager 2>&1
+              $exitCode = $LASTEXITCODE
+            }
+            finally {
+              $ErrorActionPreference = $originalErrorActionPreference
+            }
+            if ($exitCode -eq 0) { return $true }
+            if (($result | Out-String) -match "ImageNotFoundException") {
+              # The Actions PowerShell wrapper exits with the last native exit
+              # code after the script finishes. We handled this specific AWS
+              # miss, so clear the stale CLI exit code before returning false.
+              $global:LASTEXITCODE = 0
+              return $false
+            }
+            throw "Could not inspect immutable ECR image $repository`:$env:GITHUB_SHA. $result"
+          }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "backend_exists=$((Test-EcrImage $env:BACKEND_REPOSITORY).ToString().ToLowerInvariant())"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "frontend_exists=$((Test-EcrImage $env:FRONTEND_REPOSITORY).ToString().ToLowerInvariant())"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push backend
+        if: ${{ steps.existing.outputs.backend_exists != 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
+          pull: true
           push: true
-          tags: |
-            ${{ steps.images.outputs.backend_image }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.BACKEND_REPOSITORY }}:latest
+          tags: ${{ steps.images.outputs.backend_image }}
           cache-from: type=gha,scope=pacewise-backend
           cache-to: type=gha,mode=max,scope=pacewise-backend
 
       - name: Build and push frontend
+        if: ${{ steps.existing.outputs.frontend_exists != 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: frontend/pacewise/Dockerfile
           push: true
-          tags: |
-            ${{ steps.images.outputs.frontend_image }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.FRONTEND_REPOSITORY }}:latest
+          tags: ${{ steps.images.outputs.frontend_image }}
           cache-from: type=gha,scope=pacewise-frontend
           cache-to: type=gha,mode=max,scope=pacewise-frontend
 
@@ -145,6 +190,7 @@ jobs:
           INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
           BACKEND_IMAGE: ${{ needs.build-and-push.outputs.backend_image }}
           FRONTEND_IMAGE: ${{ needs.build-and-push.outputs.frontend_image }}
+          OPENAI_SECRET_ID: ${{ vars.OPENAI_SECRET_ID }}
         shell: powershell
         run: |
           function Convert-ToBase64([string] $value) {
@@ -157,17 +203,22 @@ jobs:
           $script = [Convert]::ToBase64String(
             [IO.File]::ReadAllBytes((Resolve-Path "deploy/deploy-ec2.sh"))
           )
+          $caddyfile = [Convert]::ToBase64String(
+            [IO.File]::ReadAllBytes((Resolve-Path "deploy/Caddyfile"))
+          )
           $backend = Convert-ToBase64 $env:BACKEND_IMAGE
           $frontend = Convert-ToBase64 $env:FRONTEND_IMAGE
           $imageTag = Convert-ToBase64 $env:GITHUB_SHA
           $region = Convert-ToBase64 $env:AWS_REGION
+          $openAiSecretId = Convert-ToBase64 $env:OPENAI_SECRET_ID
 
           $commands = @(
             "install -d -m 0750 /opt/pacewise",
             "printf %s '$compose' | base64 --decode > /opt/pacewise/docker-compose.yml",
             "printf %s '$script' | base64 --decode > /opt/pacewise/deploy-ec2.sh",
+            "printf %s '$caddyfile' | base64 --decode > /opt/pacewise/Caddyfile",
             "chmod 0750 /opt/pacewise/deploy-ec2.sh",
-            "AWS_REGION=`$(printf %s '$region' | base64 --decode) BACKEND_IMAGE=`$(printf %s '$backend' | base64 --decode) FRONTEND_IMAGE=`$(printf %s '$frontend' | base64 --decode) IMAGE_TAG=`$(printf %s '$imageTag' | base64 --decode) /opt/pacewise/deploy-ec2.sh"
+            "AWS_REGION=`$(printf %s '$region' | base64 --decode) BACKEND_IMAGE=`$(printf %s '$backend' | base64 --decode) FRONTEND_IMAGE=`$(printf %s '$frontend' | base64 --decode) IMAGE_TAG=`$(printf %s '$imageTag' | base64 --decode) OPENAI_SECRET_ID=`$(printf %s '$openAiSecretId' | base64 --decode) /opt/pacewise/deploy-ec2.sh"
           )
           $json = @{ commands = $commands } | ConvertTo-Json -Compress
           [IO.File]::WriteAllText(

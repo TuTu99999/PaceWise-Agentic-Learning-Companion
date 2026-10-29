@@ -20,15 +20,7 @@ export interface PlanTimelineItem {
   deadline?: string;
   readOnly: boolean;
   scheduleStatus?: 'confirmed' | 'tentative' | 'history';
-}
-
-/**
- * Keep the student calendar focused on current work without deleting history.
- * Course-owned items remain visible; expired study blocks and personal slots
- * continue to exist for learning evidence, Reflect, and audit views.
- */
-export function hidePastStudentCalendarItems(items: PlanTimelineItem[], today: string) {
-  return items.filter((item) => item.source === 'lms' || item.date >= today);
+  outsidePreferred?: boolean;
 }
 
 const LOCAL_TIME_ZONE = 'Asia/Ho_Chi_Minh';
@@ -126,6 +118,7 @@ export function buildPlanTimeline({ blocks, calendarItems, tasks, courses, unava
         deadline: task?.deadline,
         readOnly: block.status === 'history',
         scheduleStatus: block.status,
+        outsidePreferred: block.outsidePreferred,
       };
     });
 

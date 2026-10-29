@@ -47,16 +47,17 @@
 2. Hệ thống lấy mục tiêu, ngân hàng câu hỏi/rubric đã được giảng viên duyệt.
 3. Sinh viên làm 1–3 câu; với câu mở, AI chỉ phân tích theo rubric.
 4. Bộ chấm xác định trước xử lý câu đóng; AI xử lý câu mở và phải trả schema.
-5. Hệ thống tổng hợp bốn mặt: đúng khái niệm, lập luận, vận dụng và kiến thức nền.
+5. Hệ thống tổng hợp năm chiều đã kiểm tra: nhớ lại, đúng khái niệm, lập luận, vận dụng và chuyển giao sang tình huống mới.
 6. Kết quả là một trong bốn trạng thái:
    - chưa đủ bằng chứng;
    - còn nhầm lẫn;
    - đang hình thành;
    - đã thể hiện được.
-7. Mỗi kết quả có nguồn bằng chứng, độ tin cậy, giới hạn và hành động tiếp theo.
-8. Nếu độ tin cậy thấp, câu trả lời mâu thuẫn hoặc nội dung ngoài rubric, hệ thống từ chối kết luận và đưa vào hàng chờ giảng viên.
+7. Backend giữ nguồn bằng chứng, độ tin cậy, criterion đạt/chưa đạt, mức gợi ý và dimension chưa đạt làm metric cho Plan; UI sinh viên chỉ nhận xác nhận ngắn và hành động tiếp theo.
+8. Nếu độ tin cậy thấp, câu trả lời mâu thuẫn hoặc nội dung ngoài rubric, hệ thống hỏi kiểm chứng có giới hạn rồi giữ tín hiệu ở trạng thái chưa xác định; không giao giảng viên duyệt từng câu trả lời.
 
 Kết quả không được hiển thị như điểm số và không ghi vào gradebook.
+Metric chưa xác nhận không làm thay đổi Plan. Metric hợp lệ chỉ làm tăng mastery risk/thời gian ôn trong bản nháp; sinh viên vẫn phải xác nhận trước khi lịch đổi.
 
 ### 5.6 Do — Recover
 

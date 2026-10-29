@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeacherScheduleTools } from './TeacherScheduleTools';
 import { teacherScheduleAction, fetchTeacherScheduleHistory, fetchTeacherManagement } from '../../services/api';
 import type { ManagedCourse, SchedulePreview } from '../../types/teacherManagement';
+import { LocaleProvider } from '../../i18n/LocaleContext';
 
 vi.mock('../../services/api', () => ({ teacherScheduleAction: vi.fn(), fetchTeacherScheduleHistory: vi.fn(), fetchTeacherManagement: vi.fn() }));
 const courses: ManagedCourse[] = [
@@ -24,6 +25,22 @@ beforeEach(() => {
 });
 
 describe('teacher schedule preview/confirm', () => {
+  it('translates the complete Excel import portal when English is selected', async () => {
+    window.localStorage.setItem('pacewise-language', 'en');
+    render(<LocaleProvider><TeacherScheduleTools courses={courses} selectedCourseId={1} onChanged={vi.fn()} /></LocaleProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import Excel / clean schedule' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Import and clean schedule' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Import Excel' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Clean schedule' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'History / restore' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download Excel template (.xlsx)' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Schedule file (.xlsx, maximum 5 MB)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Import method')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Validate and preview file' })).toBeDisabled();
+  });
+
   it('lists course videos and exams for cleanup without changing the lesson editor', async () => {
     vi.mocked(fetchTeacherManagement).mockResolvedValueOnce({
       tasks: [], resources: [], lessons: [], weights: { groups: [], version: 'v1' },

@@ -17,10 +17,10 @@ vi.mock('../../routes/instructorRouteLoaders', () => ({
   preloadInstructorRoutes: vi.fn().mockResolvedValue(undefined),
 }));
 
-function Store({ children }: { children: ReactNode }) {
+function Store({ children, initialUser = null }: { children: ReactNode; initialUser?: unknown }) {
   const [state, dispatch] = useReducer((_: unknown, action: { type: string; user?: unknown }) => (
     { authReady: true, user: action.type === 'LOGIN' ? action.user : null }
-  ), { authReady: true, user: null });
+  ), { authReady: true, user: initialUser });
   mocks.useStore = () => useContext(StoreContext);
   return <StoreContext.Provider value={{ state, dispatch }}>{children}</StoreContext.Provider>;
 }
@@ -51,6 +51,22 @@ function setup() {
 beforeEach(() => vi.clearAllMocks());
 
 describe('login and browser history', () => {
+  it('shows and hides the password without changing its value', () => {
+    setup();
+    const password = screen.getByLabelText('Mật khẩu');
+    fireEvent.change(password, { target: { value: 'mat-khau-bi-mat' } });
+
+    expect(password).toHaveAttribute('type', 'password');
+    fireEvent.click(screen.getByRole('button', { name: 'Hiện mật khẩu' }));
+    expect(password).toHaveAttribute('type', 'text');
+    expect(password).toHaveValue('mat-khau-bi-mat');
+    expect(screen.getByRole('button', { name: 'Ẩn mật khẩu' })).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ẩn mật khẩu' }));
+    expect(password).toHaveAttribute('type', 'password');
+    expect(password).toHaveValue('mat-khau-bi-mat');
+  });
+
   it('offers one Google entry point for both returning and new students', () => {
     setup();
     expect(screen.getByRole('link', { name: 'Tiếp tục với Google' })).toHaveAttribute('href', '/signup');
@@ -90,5 +106,22 @@ describe('login and browser history', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: '/plan' })).toBeInTheDocument());
     expect(screen.queryByLabelText('Mật khẩu')).not.toBeInTheDocument();
+  });
+
+  it('does not flash the login title when browser history revisits login for an authenticated user', async () => {
+    document.title = 'Plan · PaceWise';
+    render(
+      <Store initialUser={{ id: 'test', role: 'student' }}>
+        <MemoryRouter initialEntries={['/login']}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="*" element={<Page />} />
+          </Routes>
+        </MemoryRouter>
+      </Store>,
+    );
+
+    expect(await screen.findByRole('heading', { name: '/plan' })).toBeInTheDocument();
+    expect(document.title).toBe('Plan · PaceWise');
   });
 });

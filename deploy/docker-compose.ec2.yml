@@ -2,6 +2,9 @@ name: pacewise
 
 x-backend-environment: &backend-environment
   DATABASE_URL: postgresql+psycopg://pacewise:${PACEWISE_DB_PASSWORD:?PACEWISE_DB_PASSWORD is required}@postgres:5432/pacewise
+  # The application image and migration bundle own this revision. Override a
+  # stale value left in the long-lived EC2 runtime.env during deployments.
+  DATABASE_SCHEMA_REVISION: "20261015_01"
   COURSE_SOURCE_MODE: standalone
   VECTOR_STORE_TYPE: qdrant
   QDRANT_URL: http://qdrant:6333
@@ -11,6 +14,24 @@ x-backend-environment: &backend-environment
   RERANKER_CACHE_DIR: /app/data/models/flashrank
 
 services:
+  caddy:
+    image: caddy:2.11.6-alpine
+    environment:
+      PACEWISE_DOMAIN: ${PACEWISE_DOMAIN:?PACEWISE_DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - public
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -41,6 +62,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     env_file:
       - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+      - ${PACEWISE_SECRETS_ENV_FILE:-secrets.env}
     environment:
       <<: *backend-environment
     networks:
@@ -54,6 +76,7 @@ services:
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     env_file:
       - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+      - ${PACEWISE_SECRETS_ENV_FILE:-secrets.env}
     environment:
       <<: *backend-environment
     volumes:
@@ -81,6 +104,7 @@ services:
     command: ["python", "-m", "src.worker"]
     env_file:
       - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+      - ${PACEWISE_SECRETS_ENV_FILE:-secrets.env}
     environment:
       <<: *backend-environment
     volumes:
@@ -104,6 +128,7 @@ services:
     command: ["python", "-m", "src.notification_worker"]
     env_file:
       - ${PACEWISE_RUNTIME_ENV_FILE:-runtime.env}
+      - ${PACEWISE_SECRETS_ENV_FILE:-secrets.env}
     environment:
       <<: *backend-environment
     volumes:
@@ -122,8 +147,8 @@ services:
 
   frontend:
     image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE is required}
-    ports:
-      - "80:80"
+    expose:
+      - "80"
     networks:
       - public
     depends_on:
@@ -143,5 +168,7 @@ networks:
 
 volumes:
   app_data:
+  caddy_config:
+  caddy_data:
   postgres_data:
   qdrant_data:

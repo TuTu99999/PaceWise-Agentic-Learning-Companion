@@ -23,7 +23,6 @@ export function ActivityRhythmSettings() {
   if (!courses.length) return null;
   return <section aria-label="Nhịp riêng theo môn và hoạt động" className="mt-4 rounded-xl border border-line p-3">
     <p className="text-sm font-semibold">Nhịp riêng theo môn và hoạt động</p>
-    <p className="caption mt-1">Bạn muốn học liên tục bao lâu trước khi nghỉ? Khi chưa có bằng chứng, dùng lựa chọn của bạn; không suy đoán khả năng tập trung.</p>
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
       <label className="flex flex-col gap-1 text-sm">Môn áp dụng
         <select className="min-w-0 rounded-lg border border-line bg-white p-2" value={String(courseId)} onChange={(event) => setSelectedCourse(event.target.value)}>
@@ -42,13 +41,12 @@ export function ActivityRhythmSettings() {
         <input className="min-w-0 rounded-lg border border-line p-2" type="number" min="5" max="30" value={pause} onChange={(event) => { setPause(Number(event.target.value)); setSaved(false); }} />
       </label>
     </div>
-    <p className="caption mt-2">{customized ? 'Đang dùng nhịp riêng.' : 'Hiện dùng nhịp mặc định.'} Hoạt động chưa xác định vẫn dùng mặc định. Không áp dụng sang môn khác.</p>
     <div className="mt-3 flex flex-wrap gap-2">
       <Button size="sm" disabled={!Number.isInteger(session) || session < 20 || session > 120 || !Number.isInteger(pause) || pause < 5 || pause > 30} onClick={() => {
         dispatch({ type: 'UPSERT_ACTIVITY_RHYTHM', rhythm: { courseId, activityType: activity, sessionMinutes: session, breakMinutes: pause } }); setSaved(true);
       }}>Lưu nhịp riêng</Button>
       {customized && <Button size="sm" variant="secondary" onClick={() => dispatch({ type: 'REMOVE_ACTIVITY_RHYTHM', courseId, activityType: activity })}>Dùng mặc định</Button>}
     </div>
-    {saved && <p role="status" className="caption mt-2">Đã chọn nhịp riêng; tự lưu bản nháp. Lịch hiện tại không đổi, cần phân tích và xác nhận preview mới.</p>}
+    {saved && <p role="status" className="caption mt-2">Đã lưu nhịp riêng.</p>}
   </section>;
 }

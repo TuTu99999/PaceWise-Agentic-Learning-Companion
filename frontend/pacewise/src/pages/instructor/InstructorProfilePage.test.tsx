@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InstructorProfilePage } from './InstructorProfilePage';
 import { fetchTeacherProfile, saveTeacherProfile } from '../../services/api';
 import type { TeacherProfileData } from '../../types/teacherManagement';
+import { LocaleProvider } from '../../i18n/LocaleContext';
 
 const { cache } = vi.hoisted(() => ({ cache: { current: null as { data: TeacherProfileData; savedAt: number } | null } }));
 vi.mock('../../services/api', () => ({ fetchTeacherProfile: vi.fn(), saveTeacherProfile: vi.fn() }));
@@ -11,7 +12,7 @@ vi.mock('../../store/AppStore', () => ({ useAppStore: () => ({ state: { user: { 
 const profile: TeacherProfileData = { name: 'Teacher QA', email: 'teacher@example.invalid', version: 'v1',
   details: { title: '', department: '', office: '', office_hours: '', bio: '', contact_url: '' } };
 
-beforeEach(() => { vi.clearAllMocks(); cache.current = null; vi.mocked(fetchTeacherProfile).mockResolvedValue(profile); });
+beforeEach(() => { vi.clearAllMocks(); window.localStorage.clear(); cache.current = null; vi.mocked(fetchTeacherProfile).mockResolvedValue(profile); });
 
 describe('instructor profile', () => {
   it('loads editable details but keeps LMS identity read-only', async () => {
@@ -28,6 +29,12 @@ describe('instructor profile', () => {
     render(<InstructorProfilePage />);
     expect(screen.getByLabelText('Họ tên (LMS)')).toHaveValue(profile.name);
     expect(fetchTeacherProfile).not.toHaveBeenCalled();
+  });
+
+  it('renders the complete account-scoped course note in English', async () => {
+    window.localStorage.setItem('pacewise-language', 'en');
+    render(<LocaleProvider><InstructorProfilePage /></LocaleProvider>);
+    expect(await screen.findByText('Courses taught: TRR. This profile belongs to the account and does not change when switching courses.')).toBeInTheDocument();
   });
 
   it('retries an unavailable profile and recovers without a full page reload', async () => {

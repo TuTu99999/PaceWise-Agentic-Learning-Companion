@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime
@@ -7,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from src.api.routes import _learning_thread_id, _load_lms_agent_context
+from src.api.routes import _attach_learning_availability, _learning_thread_id, _load_lms_agent_context
 from src.config import get_settings
 from src.db import SessionLocal
 from src.main import app
@@ -63,10 +64,19 @@ async def test_plan_rejects_invalid_study_rhythm_before_model_call(client, authe
 
 @pytest.mark.asyncio
 async def test_chat_stream_returns_ndjson_final_after_authenticated_qa(client, authenticated_student, monkeypatch):
-    ainvoke = AsyncMock(return_value={
-        "workflow": "qa", "status": "completed", "mode": "conversation",
-        "response": "Chào bạn!", "source_refs": [],
-    })
+    async def ainvoke(*_args, **_kwargs):
+        from src.agents.workflows.qa import _stream_sink
+
+        sink = _stream_sink.get()
+        assert sink is not None
+        sink("Chào ")
+        await asyncio.sleep(0)
+        sink("bạn!")
+        return {
+            "workflow": "qa", "status": "completed", "mode": "conversation",
+            "response": "Chào bạn!", "source_refs": [],
+        }
+
     monkeypatch.setattr("src.api.routes.agent", SimpleNamespace(ainvoke=ainvoke))
     monkeypatch.setattr("src.api.routes.LMSClient.service_get", AsyncMock(side_effect=_lms_response))
     response = await client.post("/api/v1/chat/stream", json={"workflow": "qa", "message": "xin chào"})
@@ -75,6 +85,7 @@ async def test_chat_stream_returns_ndjson_final_after_authenticated_qa(client, a
     assert response.headers["content-type"].startswith("application/x-ndjson")
     events = [json.loads(line) for line in response.text.splitlines()]
     assert events[0]["type"] == "status"
+    assert [event["text"] for event in events if event["type"] == "delta"] == ["Chào ", "bạn!"]
     assert events[-1]["type"] == "final"
     assert events[-1]["result"]["response"] == "Chào bạn!"
     assert events[-1]["result"]["mode"] == "conversation"
@@ -96,6 +107,39 @@ async def test_plan_model_context_excludes_expired_assignment_even_when_client_r
     assert response.status_code == 200
     state = ainvoke.await_args.args[0]
     assert [a['id'] for a in state['assignments']] == ['7:21']
+    assert state['goals'] == [{'taskId': '7:21'}]
+
+
+@pytest.mark.asyncio
+async def test_plan_model_context_keeps_future_assignment_and_its_start_boundary(client, authenticated_student, monkeypatch):
+    def upstream(path, params=None):
+        data = _lms_response(path, params)
+        if path.endswith('/assignments'):
+            return [{
+                **data[0],
+                'unlock_at': '2098-10-01T14:00:00+07:00',
+            }]
+        return data
+
+    ainvoke = AsyncMock(return_value={
+        'workflow': 'plan',
+        'status': 'awaiting_student',
+        'response': 'Future work remains visible',
+        'output': {'weekly_goals': [], 'plan_validation': {'valid': True}},
+    })
+    monkeypatch.setattr('src.api.routes.agent', SimpleNamespace(ainvoke=ainvoke))
+    monkeypatch.setattr('src.api.routes.LMSClient.service_get', AsyncMock(side_effect=upstream))
+
+    response = await client.post('/api/v1/chat', json={
+        'workflow': 'plan',
+        'message': 'Propose future goals',
+        'context': {'planning_stage': 'goal_proposal', 'goals': [{'taskId': '7:21'}]},
+    })
+
+    assert response.status_code == 200
+    state = ainvoke.await_args.args[0]
+    assert [assignment['id'] for assignment in state['assignments']] == ['7:21']
+    assert state['assignments'][0]['unlock_at'] == '2098-10-01T14:00:00+07:00'
     assert state['goals'] == [{'taskId': '7:21'}]
 
 
@@ -412,6 +456,7 @@ async def test_chat_enforces_shared_rate_limit_before_model(client, authenticate
         db.commit()
     auth_settings.ai_rate_limit_enabled = True
     auth_settings.ai_burst_requests = 1
+    auth_settings.ai_burst_window_seconds = 3600
     fake = AsyncMock(return_value={"workflow": "qa", "response": "Chưa đủ nguồn", "status": "completed"})
     monkeypatch.setattr("src.api.routes.LMSClient.service_get", AsyncMock(side_effect=_lms_response))
     monkeypatch.setattr("src.api.routes.agent", SimpleNamespace(ainvoke=fake))
@@ -445,6 +490,31 @@ def _lms_response(path: str, _params=None):
     if path.endswith("/modules") or path.endswith("/planner") or path.endswith("/files") or path.endswith("/calendar"):
         return []
     raise AssertionError(f"Unexpected LMS path: {path}")
+
+
+def test_learning_availability_uses_linked_lesson_end_without_guessing_completion():
+    assignment = {"course_id": "7", "chapter": "Chương 2", "resource_ids": [91, 92]}
+    events = [
+        {"course_id": 7, "event_kind": "class_session", "title": "Buổi A", "ends_at": "2026-10-18T09:00:00+07:00", "resource_ids": [91]},
+        {"course_id": 7, "event_kind": "class", "title": "Buổi B", "ends_at": "2026-10-18T11:00:00+07:00", "resource_ids": [92]},
+        {"course_id": 8, "event_kind": "class", "title": "Wrong course", "ends_at": "2026-10-19T11:00:00+07:00", "resource_ids": [92]},
+    ]
+
+    _attach_learning_availability(assignment, events, "Asia/Ho_Chi_Minh")
+
+    assert assignment["learning_available_at"] == "2026-10-18T11:00:00+07:00"
+
+
+def test_learning_availability_supports_exact_legacy_chapter_title_only():
+    assignment = {"course_id": "7", "chapter": "Chương 2: Kỹ thuật tìm kiếm", "resource_ids": []}
+    events = [
+        {"course_id": 7, "event_kind": "class", "title": "Chương 2: Kỹ thuật tìm kiếm", "ends_at": "2026-10-18T11:00:00+07:00"},
+        {"course_id": 7, "event_kind": "class", "title": "Chương 2: SQL", "ends_at": "2026-10-19T11:00:00+07:00"},
+    ]
+
+    _attach_learning_availability(assignment, events, "Asia/Ho_Chi_Minh")
+
+    assert assignment["learning_available_at"] == "2026-10-18T11:00:00+07:00"
 
 
 @pytest.mark.asyncio
@@ -600,6 +670,7 @@ async def test_chat_uses_authenticated_identity_and_lms_context(
         json={
             "message": "Giải thích overfitting",
             "workflow": "qa",
+            "locale": "en",
             "context": {
                 "student_id": "attacker",
                 "course_id": "999",
@@ -619,6 +690,7 @@ async def test_chat_uses_authenticated_identity_and_lms_context(
     assert state["course_id"] == str(authenticated_student.course_id)
     assert state["course_code"] == "AI101"
     assert state["role"] == "student"
+    assert state["request"]["locale"] == "en"
     assert "approved_rubric" not in state
     assert state["assignments"] == []  # QA no longer loads tasks from every course.
     assert state["learning_resources"] == []
@@ -743,6 +815,11 @@ async def test_do_assessment_uses_approved_server_contract_and_persists_evidence
                 payload_json=json.dumps(
                     {
                         "status": "approved",
+                        "topic": "Khái quát AI",
+                        "question": "Overfitting là gì?",
+                        "source": "ai-introduction.pdf · page 4",
+                        "answerType": "exact_text",
+                        "correctAnswer": "Học quá sát dữ liệu huấn luyện",
                         "rubric": ["Đúng khái niệm", "Có lập luận"],
                         "version": 2,
                         "level": "conceptual",
@@ -756,20 +833,7 @@ async def test_do_assessment_uses_approved_server_contract_and_persists_evidence
 
     async def service_get(_client, path, params=None):
         if path.endswith("/quizzes"):
-            return [
-                {
-                    "id": 5,
-                    "title": "Kiểm tra AI",
-                    "questions": [
-                        {
-                            "id": 998,
-                            "prompt": "Overfitting là gì?",
-                            "question_type": "closed",
-                            "correct_answer": "Học quá sát dữ liệu huấn luyện",
-                        }
-                    ],
-                }
-            ]
+            raise AssertionError("Assessment must not read legacy quizzes")
         return _lms_response(path, params)
 
     monkeypatch.setattr("src.api.routes.LMSClient.service_get", service_get)
@@ -855,7 +919,15 @@ async def test_understanding_uses_only_server_approved_rubric(
                 action_type="assessment",
                 entity_id=assessment_id,
                 payload_json=json.dumps(
-                    {"status": "approved", "rubric": ["Rubric do giảng viên duyệt"]},
+                    {
+                        "status": "approved",
+                        "topic": "Khái quát AI",
+                        "question": "Overfitting là gì?",
+                        "source": "ai-introduction.pdf · page 4",
+                        "answerType": "exact_text",
+                        "correctAnswer": "Học quá sát dữ liệu huấn luyện",
+                        "rubric": ["Rubric do giảng viên duyệt"],
+                    },
                     ensure_ascii=False,
                 ),
             )
@@ -864,20 +936,7 @@ async def test_understanding_uses_only_server_approved_rubric(
 
     async def service_get(_client, path, _params=None):
         if path.endswith("/quizzes"):
-            return [
-                {
-                    "id": 5,
-                    "title": "Kiểm tra AI",
-                    "questions": [
-                        {
-                            "id": 999,
-                            "prompt": "Overfitting là gì?",
-                            "question_type": "closed",
-                            "correct_answer": "Học quá sát dữ liệu huấn luyện",
-                        }
-                    ],
-                }
-            ]
+            raise AssertionError("Assessment must not read legacy quizzes")
         return _lms_response(path, _params)
 
     monkeypatch.setattr("src.api.routes.LMSClient.service_get", service_get)

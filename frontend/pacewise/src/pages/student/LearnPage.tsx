@@ -23,8 +23,12 @@ import type { QAResult } from '../../utils/qa';
 import { cx } from '../../utils/cx';
 import { uid } from '../../utils/time';
 import { submitChatOnEnter } from '../../utils/chatInput';
+import { useLocale } from '../../i18n/LocaleContext';
+import { englishDemoTaskTitle } from '../../utils/demoContentTranslation';
 
 const MAX_LEN = 1000;
+export const englishSuggestionTaskTitle = englishDemoTaskTitle;
+
 function AssistantMessage({ m, onOpen, onHint, onAsk, hintLoading }: { m: QAMessage; onOpen: (s: Source) => void; onHint: () => void; onAsk: (q: string) => void; hintLoading: boolean }) {
   if (m.kind === 'integrity') {
     return (
@@ -60,6 +64,7 @@ export function LearnPage() {
   const { state, dispatch } = useAppStore();
   const { activeCourse, activeTasks } = useDerived();
   const toast = useToast();
+  const { locale, t } = useLocale();
 
   // Q&A state
   const [q, setQ] = useState('');
@@ -70,7 +75,12 @@ export function LearnPage() {
   const [retryAt, setRetryAt] = useState(0);
   const [retrySeconds, setRetrySeconds] = useState(0);
   const [hintLoading, setHintLoading] = useState(false);
-  const [error, setError] = useState<{ question: string; requestId: string } | null>(null);
+  const [error, setError] = useState<{
+    question: string;
+    requestId: string;
+    code: ApiError['code'];
+    message: string;
+  } | null>(null);
   const [inputError, setInputError] = useState('');
   const [openSource, setOpenSource] = useState<Source | null>(null);
   const chatScrollRevision = `${state.qaMessages.length}:${loading}:${streamingText.length}:${error?.requestId ?? ''}`;
@@ -110,7 +120,9 @@ export function LearnPage() {
   const compactHistory = (learningWidth ?? window.innerWidth) < 1120;
 
   const suggestedQuestions = activeTasks.slice(0, 3).map(
-    (task) => `Giải thích kiến thức cần để thực hiện “${task.title}”.`,
+    (task) => locale === 'en'
+      ? `Explain the knowledge needed to complete “${englishSuggestionTaskTitle(task.title)}”.`
+      : `Giải thích kiến thức cần để thực hiện “${task.title}”.`,
   );
 
   // Cuộc trò chuyện theo khóa học
@@ -187,7 +199,7 @@ export function LearnPage() {
       const history = state.qaMessages.slice(-4).map((message) => ({ role: message.role, content: message.text.slice(0, 1000) }));
       const r = await askQuestion(text, history, controller.signal, (delta) => {
         if (!controller.signal.aborted) setStreamingText((current) => current + delta);
-      });
+      }, locale);
       if (controller.signal.aborted) return;
       push('assistant', r.text, r);
       setStreamingText('');
@@ -202,7 +214,13 @@ export function LearnPage() {
         toast({ tone: 'warning', title: 'Đang giới hạn yêu cầu', description: e.message });
       }
       setStreamingText('');
-      setError({ question: text, requestId: e instanceof ApiError ? e.requestId : 'PW-REQ-UNKNOWN' });
+      const apiError = e instanceof ApiError ? e : null;
+      setError({
+        question: text,
+        requestId: apiError?.requestId || 'PW-REQ-UNKNOWN',
+        code: apiError?.code || 'UPSTREAM',
+        message: apiError?.message || 'Dịch vụ AI tạm thời chưa sẵn sàng.',
+      });
     } finally {
       if (requestRef.current === controller) {
         requestRef.current = null;
@@ -427,7 +445,7 @@ export function LearnPage() {
             </button>
 
             <div className="flex min-w-0 items-center gap-2">
-              <CourseSwitcher compact notifyOnSuccess={false} />
+              <CourseSwitcher compact menuAlign="left" notifyOnSuccess={false} />
               <span title={`${activeCourse?.code ?? 'Môn học'}: ${activeCourse?.name ?? 'Kho học liệu'}`} className="truncate text-xs font-semibold text-ink sm:text-sm">
                 {activeCourse?.code ?? 'Môn học'}: {activeCourse?.name ?? 'Kho học liệu'}
               </span>
@@ -456,10 +474,12 @@ export function LearnPage() {
                   </div>
 
                   <h2 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
-                    Xin chào! Hôm nay bạn muốn tìm hiểu kiến thức gì?
+                    {t('Xin chào! Hôm nay bạn muốn tìm hiểu kiến thức gì?')}
                   </h2>
                   <p className="mt-2 max-w-md text-xs sm:text-sm text-slate-500 leading-relaxed">
-                    Hỏi về học liệu {activeCourse?.code ?? 'môn học'}. Mỗi câu trả lời có nguồn để đối chiếu; khi thiếu bằng chứng, PaceWise sẽ nói rõ.
+                    {locale === 'en'
+                      ? `Ask about ${activeCourse?.code ?? 'your course'} materials. Every answer includes sources you can verify; PaceWise will clearly say when evidence is insufficient.`
+                      : `Hỏi về học liệu ${activeCourse?.code ?? 'môn học'}. Mỗi câu trả lời có nguồn để đối chiếu; khi thiếu bằng chứng, PaceWise sẽ nói rõ.`}
                   </p>
 
                   {/* Suggestion Cards phong cách Google Gemini */}
@@ -488,7 +508,7 @@ export function LearnPage() {
               {state.qaMessages.map((m) =>
                 m.role === 'user' ? (
                   <div key={m.id} className="flex justify-end">
-                    <div className="max-w-[85%] rounded-3xl rounded-br-md bg-[#2563EB] px-5 py-3 text-[14px] leading-relaxed text-[#FFFFFF] shadow-xs">
+                    <div data-i18n-skip="true" className="max-w-[85%] rounded-3xl rounded-br-md bg-[#2563EB] px-5 py-3 text-[14px] leading-relaxed text-[#FFFFFF] shadow-xs">
                       {m.text}
                     </div>
                   </div>
@@ -505,10 +525,17 @@ export function LearnPage() {
                         hintLoading={hintLoading}
                         onHint={async () => {
                           setHintLoading(true);
+                          const history = state.qaMessages.slice(-4).map((message) => ({
+                            role: message.role,
+                            content: message.text.slice(0, 1000),
+                          }));
                           push('user', 'Cho mình gợi ý');
-                          const r = await askHint();
-                          push('assistant', r.text, r);
-                          setHintLoading(false);
+                          try {
+                            const r = await askHint(history, locale);
+                            push('assistant', r.text, r);
+                          } finally {
+                            setHintLoading(false);
+                          }
                         }}
                       />
                     </div>
@@ -553,8 +580,10 @@ export function LearnPage() {
 
               {error && (
                 <ErrorState
-                  title="Chưa thể kết nối dịch vụ AI"
-                  description="Câu hỏi của bạn vẫn được giữ lại. Chưa có gì bị mất."
+                  title={error.code === 'RATE_LIMITED' ? 'Đã đạt giới hạn AI' : 'Chưa thể kết nối dịch vụ AI'}
+                  description={error.code === 'RATE_LIMITED'
+                    ? `${error.message} Câu hỏi của bạn vẫn được giữ lại.`
+                    : 'Câu hỏi của bạn vẫn được giữ lại. Chưa có gì bị mất.'}
                   requestId={error.requestId}
                   onRetry={() => ask(error.question, true)}
                 />

@@ -71,13 +71,13 @@ describe('buildReflectionActivities', () => {
 });
 
 describe('reflectionActivityWindow', () => {
-  it('uses the current demo week for an explicit post-session reflection during Monday grace', () => {
+  it('keeps the selected activity week instead of replacing it with the current week', () => {
     expect(reflectionActivityWindow({
       requestedActivity: true,
       weeklyStart: '2026-09-28',
       weeklyEnd: '2026-10-04',
       today: '2026-10-05',
-    })).toEqual({ from: '2026-10-05', to: '2026-10-11' });
+    })).toEqual({ from: '2026-09-28', to: '2026-10-04' });
   });
 
   it('keeps the weekly window when no activity is requested', () => {

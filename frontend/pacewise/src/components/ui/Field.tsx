@@ -42,19 +42,28 @@ export function Field({ label, hint, error, required, hideLabel, className, chil
   );
 }
 
-type InputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'id'> & Omit<FieldShellProps, 'children'>;
-export function Input({ label, hint, error, required, hideLabel, className, ...rest }: InputProps) {
+type InputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'id'>
+  & Omit<FieldShellProps, 'children'>
+  & { endAdornment?: React.ReactNode };
+export function Input({ label, hint, error, required, hideLabel, className, endAdornment, ...rest }: InputProps) {
   return (
     <Field label={label} hint={hint} error={error} required={required} hideLabel={hideLabel} className={className}>
       {({ id, describedBy, invalid }) => (
-        <input
-          id={id}
-          aria-describedby={describedBy}
-          aria-invalid={invalid || undefined}
-          required={required}
-          className={cx(control, invalid ? 'border-danger-ink bg-[#FFFBFB]' : 'border-line')}
-          {...rest}
-        />
+        <div className="relative">
+          <input
+            id={id}
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
+            required={required}
+            className={cx(control, Boolean(endAdornment) && 'pr-12', invalid ? 'border-danger-ink bg-[#FFFBFB]' : 'border-line')}
+            {...rest}
+          />
+          {endAdornment && (
+            <div className="absolute inset-y-0 right-1 flex items-center">
+              {endAdornment}
+            </div>
+          )}
+        </div>
       )}
     </Field>
   );

@@ -12,6 +12,7 @@ function sourceLabel(ref: string): string {
 function methodLabel(source: string | undefined): string {
   if (source === 'llm') return 'AI phân rã';
   if (source === 'rubric_evidence') return 'Theo rubric';
+  if (source === 'assignment_question_evidence') return 'Theo câu/phần trong đề';
   if (source === 'template') return 'Theo loại bài';
   if (source === 'rule_based_fallback') return 'Bản an toàn';
   return 'Theo dữ liệu nhiệm vụ';
@@ -33,7 +34,7 @@ export function PlanTaskAnalysis({ draft, tasks }: { draft: PlanDraft; tasks: Ta
     <summary className="cursor-pointer list-none">
       <span className="flex items-center gap-2 font-bold text-ink">
         <Icon name="sparkle" size={16} className="text-primary-ink" />
-        Mục tiêu tuần & các bước thực hiện
+        Kế hoạch từ syllabus / assignment
       </span>
       <span className="mt-1 block text-muted">
         {goals.length} mục tiêu · {milestones.length} bước · nguồn từ assignment, module, rubric hoặc tài liệu bài tập được phép.
@@ -45,11 +46,12 @@ export function PlanTaskAnalysis({ draft, tasks }: { draft: PlanDraft; tasks: Ta
     </p>}
 
     {!!goals.length && <div className="mt-3 space-y-2" aria-label="Mục tiêu tuần đã chọn">
+      <h3 className="font-bold text-ink">1. Mục tiêu tuần đã xác nhận</h3>
       {goals.map((goal) => <article key={goal.id} className="rounded-lg border border-line bg-white p-2.5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <p className="font-semibold text-ink">{goal.title}</p>
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-muted">
-            {goal.analysisSource === 'model' ? 'AI đề xuất' : 'Theo deadline/assignment'}
+            {goal.analysisSource === 'model' ? 'AI đề xuất' : 'Theo syllabus / assignment'}
           </span>
         </div>
         {!!goal.rationale && <p className="mt-1 text-muted">{goal.rationale}</p>}
@@ -61,6 +63,7 @@ export function PlanTaskAnalysis({ draft, tasks }: { draft: PlanDraft; tasks: Ta
     </div>}
 
     {!!milestones.length && <div className="mt-3 max-h-80 space-y-3 overflow-y-auto pr-1" aria-label="Các bước nhiệm vụ đã phân rã">
+      <h3 className="font-bold text-ink">2. Nhiệm vụ đã chia nhỏ và thời lượng dự kiến</h3>
       {[...grouped.entries()].map(([taskId, steps]) => <section key={taskId} className="rounded-lg border border-line bg-white p-2.5">
         <h3 className="font-bold text-ink">{taskName(taskId)}</h3>
         <ol className="mt-2 space-y-2">

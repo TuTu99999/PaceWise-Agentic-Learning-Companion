@@ -1,15 +1,13 @@
 # PaceWise
 
-Demo chạy **PaceWise độc lập**, không cần API/web/database simulator. Tài khoản và dữ liệu cũ đã chuyển vào PostgreSQL PaceWise: [Hướng dẫn Docker và chuyển dữ liệu](docs/pacewise-standalone-migration.md).
-
-Audit LMS simulator phục vụ Plan–Do–Reflect, chức năng đã sửa, kết quả test và giới hạn: [LMS simulator audit](docs/lms-simulator-pacewise-audit.md).
+Demo chạy **PaceWise độc lập**, không cần API/web/database simulator. Tài khoản và dữ liệu được lưu trong PostgreSQL PaceWise.
 
 PaceWise là learning companion cho sinh viên theo chu trình **Plan → Do → Reflect**:
 
 - **Plan:** lấy deadline/lịch học từ LMS, kết hợp lịch cá nhân, quỹ thời gian và ưu tiên để tạo study block khả thi.
 - **Do:** chạy phiên tự học, ghi actual time, gợi ý học liệu có nguồn, hỏi đáp có citation và chặn yêu cầu làm hộ bài tính điểm.
 - **Reflect:** phản tư sau hoạt động hoặc cuối tuần; đề xuất điều chỉnh, nhưng sinh viên vẫn xem và xác nhận trước khi đổi kế hoạch.
-- **Instructor HITL:** hiển thị tín hiệu tổng hợp và hàng chờ cần con người xem; không dùng AI để tự chấm điểm hay tự đổi quy định học vụ.
+- **Instructor verification design:** giảng viên duyệt câu hỏi tự luận, các ý cần đạt và nguồn kiến thức; Assessment Agent chỉ tạo tín hiệu có cấu trúc cho Plan/Replan, không tạo điểm môn học hoặc bắt giảng viên duyệt từng câu trả lời.
 
 Tài liệu kỹ thuật: [architecture diagram](docs/architecture_diagram.md) · [evaluation evidence](docs/evaluation-evidence.md).
 
@@ -29,20 +27,21 @@ Mở:
 
 | Thành phần | URL |
 |---|---|
+| PaceWise production | <https://c4-app-008.io.vn/> |
 | PaceWise | <http://localhost:5173> |
 | FastAPI Swagger | <http://localhost:8000/docs> |
 | Backend health | <http://localhost:8000/health> |
 | LMS Simulator | Đã tắt; giữ mã/volume cũ làm bản dự phòng, không cần cho demo |
 | Qdrant dashboard | <http://localhost:6333/dashboard> |
 
-Tài khoản demo LMS/PaceWise:
+Tài khoản production dùng cho Demo Day:
 
-| Vai trò | Email | Mật khẩu |
+| Vai trò | Email | Cách đăng nhập |
 |---|---|---|
-| Sinh viên | `student@canvas.local` | `demo123` |
-| Giảng viên | `teacher@canvas.local` | `demo123` |
+| Sinh viên | `canhquat213@gmail.com` | Chọn **Tiếp tục với Google** |
+| Giảng viên | `teacher1@pacewise.edu.vn` | Mật khẩu demo cung cấp riêng cho mentor |
 
-Tài khoản trên là tài khoản demo đã được giữ qua migration; không đổi mật khẩu.
+Hai tài khoản trên dùng cho bản production tại <https://c4-app-008.io.vn/>.
 Trên server mới cần restore database PaceWise (cả schema `public` và `course_source`),
 `data/course-source`, Qdrant và các khóa mã hóa/signing đang dùng. Không tự seed
 hoặc ghi đè dữ liệu khi restart. Với thay đổi frontend/backend, rebuild service liên quan:
@@ -220,7 +219,7 @@ docker compose --env-file .env -f lms-simulator/docker-compose.yml up -d --build
 docker compose up -d --build backend worker frontend
 ```
 
-Chi tiết kiểm thử và giới hạn: [LMS materials sync evaluation](docs/lms-materials-sync-evaluation.md).
+Chi tiết kiểm thử và giới hạn: [Testing documents](docs/deliverables/05-testing/README.md).
 
 - LMS production adapter/LTI cần developer key và sandbox của trường; simulator đang là nguồn demo chính.
 - KPI nộp đúng hạn cần pilot nhiều tuần, không thể chứng minh chỉ bằng UI hoặc seed data.
@@ -238,7 +237,7 @@ Chi tiết kiểm thử và giới hạn: [LMS materials sync evaluation](docs/l
 
 Web Push dùng `WEBPUSH_ENABLED`, `WEBPUSH_PRIVATE_KEY_FILE`, `WEBPUSH_SUBJECT`. Development tạo khóa một lần tại `data/webpush-vapid.pem`; production phải cấp một khóa P-256 PEM ổn định, lưu bền vững và đặt contact VAPID thật. Không commit khóa hoặc subscription endpoint. Backend và worker phải dùng cùng khóa, volume, database. Các biến này đã có trong `.env.example`; không cần thêm một API key Google để dùng Web Push.
 
-Chi tiết vận hành, kết quả test và giới hạn: [Student reminders evaluation](docs/student-reminders-integrations-evaluation.md).
+Chi tiết vận hành, kết quả test và giới hạn: [Testing documents](docs/deliverables/05-testing/README.md).
 
 ### Bảo mật, SSO hai chiều và monitoring
 
@@ -250,7 +249,7 @@ docker compose --profile observability up -d --build
 
 Prometheus ở `http://localhost:9090`, Grafana ở `http://localhost:3001` (chỉ bind localhost). LangSmith là metadata-only, opt-in qua `LANGSMITH_ENABLED`/`LANGSMITH_API_KEY`; chưa bật cloud tracing mặc định. Chọn model ID thật qua `LLM_FAST_MODEL`/`LLM_REASONING_MODEL`. Cache và admission control hiện process-local, không phải chứng nhận tải 1.000 sinh viên.
 
-Chi tiết test, SSO, privacy, KPI trước/sau và checklist production: [Security & observability evaluation](docs/security-sso-observability-evaluation-2026-10-09.md).
+Chi tiết test, SSO, privacy và checklist production: [Testing documents](docs/deliverables/05-testing/README.md).
 
 ### Private API và Google quota guard
 
@@ -258,4 +257,4 @@ Frontend hiện dùng ECDH/HKDF/AES-GCM cho JSON request/response, gồm ID và 
 
 Google Calendar có limiter database dùng chung: mặc định project 1500/phút, user 60/phút, budget 50000 trong cửa sổ ngày bảo thủ, tối đa 16 outbound đang chạy. Cache 5 phút, khóa chống sync trùng, retry bounded và event ID ổn định. Đặt thấp hơn quota thực tế của project; không giả định mọi usage sẽ luôn miễn phí.
 
-Sau rebuild **Ctrl+F5**. Chi tiết khóa bền vững, test và giới hạn: [Private API & Google quota evaluation](docs/private-api-google-quota-evaluation-2026-10-09.md).
+Sau rebuild **Ctrl+F5**. Kết quả kiểm thử và giới hạn được tổng hợp tại [Testing documents](docs/deliverables/05-testing/README.md).

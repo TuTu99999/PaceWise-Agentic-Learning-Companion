@@ -22,7 +22,7 @@ function requestInstructorData(key: string) {
 }
 
 /** One controller per authenticated instructor layout, not per routed page. */
-function useInstructorDataController() {
+function useInstructorDataController(enabled: boolean) {
   const { state, dispatch } = useAppStore();
   const hasData = state.classGroups?.length > 0;
   const [loading, setLoading] = useState(hasActiveCourse(state.user?.courseId) && !hasData);
@@ -58,6 +58,7 @@ function useInstructorDataController() {
   const loadedScope = useRef<string | null>(hasData ? scope : null);
 
   const refresh = async () => {
+    if (!enabled) return;
     const userId = state.user?.id;
     const courseId = state.user?.courseId;
     if (!userId || !hasActiveCourse(courseId)) {
@@ -93,6 +94,12 @@ function useInstructorDataController() {
     generation.current += 1;
     const userId = state.user?.id;
     const courseId = state.user?.courseId;
+    if (!enabled) {
+      setLoading(false);
+      setRefreshing(false);
+      setError(null);
+      return () => { active = false; generation.current += 1; };
+    }
     if (!userId || !hasActiveCourse(courseId)) {
       materialCache.current.clear();
       authoringCache.current.clear();
@@ -140,30 +147,15 @@ function useInstructorDataController() {
       .finally(() => { if (active) { setLoading(false); setRefreshing(false); } });
 
     return () => { active = false; generation.current += 1; };
-  }, [dispatch, state.lmsRevision, state.user?.courseId, state.user?.id]);
-
-  useEffect(() => {
-    if (!state.user?.id || !hasActiveCourse(state.user.courseId)) return;
-    const revalidate = () => {
-      if (!document.hidden && !isInstructorOverviewCacheFresh(state.user?.id, state.user?.courseId)) void refresh();
-    };
-    const timer = window.setInterval(revalidate, 60_000);
-    document.addEventListener('visibilitychange', revalidate);
-    window.addEventListener('online', revalidate);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', revalidate);
-      window.removeEventListener('online', revalidate);
-    };
-  }, [state.user?.id, state.user?.courseId, state.lmsRevision]);
+  }, [dispatch, enabled, state.lmsRevision, state.user?.courseId, state.user?.id]);
 
   return { loading, refreshing, error, refresh, materialCache: materialCache.current, authoringCache: authoringCache.current, profileCache };
 }
 
 const InstructorDataContext = createContext<ReturnType<typeof useInstructorDataController> | null>(null);
 
-export function InstructorDataProvider({ children }: { children: ReactNode }) {
-  const value = useInstructorDataController();
+export function InstructorDataProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
+  const value = useInstructorDataController(enabled);
   return createElement(InstructorDataContext.Provider, { value }, children);
 }
 

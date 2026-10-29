@@ -647,9 +647,9 @@ def cancel_lesson(course_id: int, lesson_id: int, payload: VersionInput, user_id
 
 @router.get("/profile")
 def read_profile(user_id: int, db: Session = Depends(get_db)):
-    if not db.scalar(select(Enrollment.id).where(Enrollment.user_id == user_id, Enrollment.role == "instructor")):
-        raise HTTPException(403, "Instructor enrollment required")
     user = db.get(User, user_id)
+    if not user or user.role != "instructor":
+        raise HTTPException(403, "Instructor account required")
     profile = db.get(TeacherProfile, user_id)
     details = json.loads(profile.profile_json) if profile else ProfileInput().model_dump(exclude={"expected_version"})
     return {"name": user.full_name, "email": user.email, "details": details, "version": revision(details)}

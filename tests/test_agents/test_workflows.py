@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from src.agents.workflows.coordinator import coordinator_node
@@ -21,15 +22,21 @@ def test_coordinator_persists_security_flags():
 
 
 def test_coordinator_keeps_valid_non_answering_workflow_when_classifier_is_unavailable(monkeypatch):
-    monkeypatch.setattr(
-        "src.agents.workflows.coordinator.evaluate_input_policy",
-        lambda _query: {
+    policy_calls = []
+
+    def input_policy(_query, **kwargs):
+        policy_calls.append(kwargs)
+        return {
             "action": "guided_help",
             "reason": "semantic_classifier_unavailable_guided_help",
             "is_injection_attempt": False,
             "is_homework_cheat_attempt": True,
             "layers": ["rules", "semantic_classifier"],
-        },
+        }
+
+    monkeypatch.setattr(
+        "src.agents.workflows.coordinator.evaluate_input_policy",
+        input_policy,
     )
     monkeypatch.setattr(
         "src.agents.workflows.coordinator.evaluate_guardrails",
@@ -46,6 +53,7 @@ def test_coordinator_keeps_valid_non_answering_workflow_when_classifier_is_unava
     assert result["workflow"] == "plan"
     assert result["security_flags"]["action"] == "allow"
     assert result["security_flags"]["reason"] == "non_answering_workflow"
+    assert policy_calls == [{"semantic_mode": "signals"}]
 
 
 def test_do_prepares_authorized_module_resources_for_study_block():
@@ -304,7 +312,22 @@ def test_qa_records_citation_dispute():
 
 
 def test_plan_returns_validated_draft_requiring_confirmation(mock_llm):
-    result = plan_node({"query": "Lập kế hoạch tuần", "availability": [{"hours": 10}]})
+    result = plan_node(
+        {
+            "query": "Lập kế hoạch tuần",
+            "availability": [{"hours": 10}],
+            "assignments": [
+                {
+                    "id": "course:task-1",
+                    "title": "Database report",
+                    "description": "Write the schema, queries, test evidence, and review before submission.",
+                    "deadline": "2026-10-20T20:00:00+07:00",
+                    "submission_types": ["online_upload"],
+                    "estimated_hours": 2,
+                }
+            ],
+        }
+    )
     assert result["pending_action"]["type"] == "confirm_plan"
     assert result["status"] == "awaiting_student"
 
@@ -352,21 +375,15 @@ def test_plan_proposes_reviewable_weekly_goals_from_open_lms_tasks(monkeypatch):
         }
     ]
     assert result["output"]["plan_validation"]["valid"] is True
-    assert result["output"]["goal_analysis"]["source"] == "assignment_rule_fallback"
+    assert result["output"]["goal_analysis"]["source"] == "assignment_rule"
+    assert result["output"]["goal_analysis"]["fallbackApplied"] is False
 
 
-def test_plan_model_goals_cover_every_task_and_keep_only_official_sources(monkeypatch):
-    class GoalModel:
-        def invoke(self, _messages):
-            return type(
-                "Response",
-                (),
-                {
-                    "content": """{"weekly_goals":[{"id":"g1","title":"Hoàn thành bản nháp có thể kiểm tra","task_ids":["1:10"],"rationale":"Bài gần hạn và có rubric","source_refs":["assignment:1:10","rubric:r1","file:forged"]}]}"""
-                },
-            )()
-
-    monkeypatch.setattr("src.agents.workflows.plan.get_agent_llm", lambda **_kwargs: GoalModel())
+def test_plan_goals_are_deterministic_and_keep_only_official_sources(monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.workflows.plan.get_agent_llm",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("weekly goals must not call a model")),
+    )
     result = plan_node(
         {
             "query": "Đề xuất mục tiêu tuần",
@@ -385,14 +402,52 @@ def test_plan_model_goals_cover_every_task_and_keep_only_official_sources(monkey
     )
 
     goal = result["output"]["weekly_goals"][0]
-    assert goal["analysisSource"] == "model"
+    assert goal["analysisSource"] == "assignment_rule"
     assert goal["sourceRefs"] == ["assignment:1:10", "rubric:r1"]
     assert result["output"]["goal_analysis"] == {
-        "source": "model",
+        "source": "assignment_rule",
         "fallbackApplied": False,
         "candidateTaskIds": ["1:10"],
         "coveredTaskIds": ["1:10"],
     }
+
+
+def test_weekly_goal_reads_assignment_parts_before_decomposition(monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.workflows.plan.get_agent_llm",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("goal proposal stays deterministic")),
+    )
+    result = plan_node(
+        {
+            "query": "Đề xuất mục tiêu tuần cho DB201",
+            "planning_stage": "goal_proposal",
+            "assignments": [
+                {
+                    "id": "DB201:20",
+                    "title": "Bài tập truy vấn SQL",
+                    "chapter": "Chương 4 · Truy vấn dữ liệu",
+                    "deadline": "2026-10-20T23:59:00+07:00",
+                    "assignment_parts": [
+                        {
+                            "partId": f"file-8-S4-P{index}",
+                            "content": f"Câu SQL {index}",
+                            "sourceRef": f"file:8#exercise=4&part=file-8-S4-P{index}",
+                        }
+                        for index in range(1, 5)
+                    ],
+                }
+            ],
+        }
+    )
+
+    goal = result["output"]["weekly_goals"][0]
+    assert goal["title"] == "Hoàn thành 4 phần của Bài tập truy vấn SQL"
+    assert "nhận diện 4 câu/phần" in goal["rationale"]
+    assert "module:course:Chương 4 · Truy vấn dữ liệu" in goal["sourceRefs"]
+    assert {
+        f"file:8#exercise=4&part=file-8-S4-P{index}"
+        for index in range(1, 5)
+    }.issubset(set(goal["sourceRefs"]))
 
 
 def test_plan_confirmation_is_explicit():
@@ -567,6 +622,53 @@ def test_open_understanding_uses_approved_rubric(monkeypatch):
     assert result["status"] == "completed"
 
 
+def test_understanding_calibrates_short_answers_and_respects_requested_locale(monkeypatch):
+    captured = {}
+    content = (
+        "Evidence-based feedback.\n```json\n"
+        '{"status":"đang hình thành","confidence":"Cao",'
+        '"evidence_quotes":["A concise complete answer"],'
+        '"criterion_scores":[{"criterion_id":"reason","score":3,'
+        '"evidence_quote":"A concise complete answer"}]}\n```'
+    )
+
+    def invoke(messages):
+        captured["prompt"] = messages[-1].content
+        return SimpleNamespace(content=content)
+
+    monkeypatch.setattr(
+        "src.agents.workflows.understanding.get_agent_llm",
+        lambda **_kwargs: SimpleNamespace(invoke=invoke),
+    )
+    result = understanding_node(
+        {
+            "query": "A concise complete answer",
+            "approved_rubric": [{"id": "reason", "description": "Reasoning supports the conclusion"}],
+            "request": {"question": "Why?", "assessment_stage": "why", "locale": "en"},
+        }
+    )
+
+    assert "Một câu trả lời ngắn vẫn có thể đạt mức 3 hoặc 4" in captured["prompt"]
+    assert "toàn bộ nhận xét cho sinh viên bằng tiếng Anh" in captured["prompt"]
+    assert result["response"].startswith("Evidence-based feedback")
+    assert result["assessment_result"]["criterion_scores"][0]["score"] == 3
+
+
+def test_closed_understanding_feedback_follows_english_locale():
+    result = understanding_node(
+        {
+            "query": "A",
+            "request": {
+                "question_type": "closed",
+                "correct_answer": "A. Correct",
+                "locale": "en",
+            },
+        }
+    )
+
+    assert result["response"] == "Correct. Your answer matches the approved answer."
+
+
 def test_missing_rubric_moves_assessment_to_teacher_queue(monkeypatch):
     content = (
         "Nhận xét.\n```json\n"
@@ -607,6 +709,79 @@ def test_open_assessment_rejects_model_authored_evidence_quote(monkeypatch):
     assert result["assessment_result"]["evidence_quotes"] == []
     assert result["status"] == "awaiting_teacher"
     assert "missing_evidence" in result["output"]["assessment_validation"]["reasons"]
+
+
+def test_grounded_misconception_survives_missing_criterion_scores(monkeypatch):
+    answer = (
+        "Em chọn bubble sort nhưng không cần cờ swapped vì dãy gần được sắp xếp thì thuật toán tự dừng. "
+        "Bubble sort luôn có độ phức tạp O(n) và dùng O(n) bộ nhớ để lưu các phần tử đã đổi chỗ."
+    )
+    content = (
+        "Bạn đang nhầm về điều kiện dừng, độ phức tạp và bộ nhớ phụ.\n```json\n"
+        + json.dumps(
+            {
+                "status": "còn nhầm lẫn",
+                "confidence": "Cao",
+                "evidence_quotes": ["Bubble sort luôn có độ phức tạp O(n)"],
+                # Simulate a provider response whose rubric score identifiers
+                # do not match the approved teacher criteria.
+                "criterion_scores": [
+                    {"criterion_id": "unknown", "score": 1, "evidence_quote": "Bubble sort luôn có độ phức tạp O(n)"}
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n```"
+    )
+    monkeypatch.setattr(
+        "src.agents.workflows.understanding.get_agent_llm",
+        lambda **_kwargs: SimpleNamespace(invoke=lambda _messages: SimpleNamespace(content=content)),
+    )
+
+    result = understanding_node(
+        {
+            "query": answer,
+            "approved_rubric": {
+                "criteria": [
+                    {"id": "early-stop", "description": "Nêu đúng điều kiện dừng sớm"},
+                    {"id": "complexity", "description": "Phân tích đúng trường hợp tốt và xấu"},
+                    {"id": "memory", "description": "Nêu đúng bộ nhớ phụ O(1)"},
+                ]
+            },
+            "request": {"assessment_stage": "application", "question": "Phân tích bubble sort."},
+        }
+    )
+
+    assessment = result["assessment_result"]
+    assert assessment["status"] == "còn nhầm lẫn"
+    assert assessment["confidence"] == "Cao"
+    assert assessment["dimensions"]["application"] == "failed"
+    assert assessment["criterion_scores"] == []
+    assert result["status"] == "completed"
+    assert result["output"]["assessment_validation"]["valid"] is True
+
+
+def test_missing_scores_never_promote_positive_mastery(monkeypatch):
+    content = (
+        "Nhận xét không có điểm rubric.\n```json\n"
+        '{"status":"đã thể hiện được","confidence":"Cao",'
+        '"evidence_quotes":["Bubble sort so sánh từng cặp kề nhau"]}\n```'
+    )
+    monkeypatch.setattr(
+        "src.agents.workflows.understanding.get_agent_llm",
+        lambda **_kwargs: SimpleNamespace(invoke=lambda _messages: SimpleNamespace(content=content)),
+    )
+
+    result = understanding_node(
+        {
+            "query": "Bubble sort so sánh từng cặp kề nhau",
+            "approved_rubric": {"criteria": [{"id": "concept", "description": "Đúng khái niệm"}]},
+            "request": {"assessment_stage": "explain", "question": "Giải thích bubble sort."},
+        }
+    )
+
+    assert result["assessment_result"]["status"] == "chưa đủ bằng chứng"
+    assert result["assessment_result"]["dimensions"]["conceptual"] == "not_tested"
 
 
 def test_understanding_parser_handles_generic_json_and_natural_language_fallbacks():
@@ -672,8 +847,9 @@ def test_understanding_preserves_machine_result_when_response_is_only_json(monke
 def test_reflect_creates_structured_draft_and_hitl(monkeypatch):
     content = (
         "Tuần này bạn đã duy trì được nhịp học.\n```json\n"
-        '{"effective":"học buổi sáng","deviation_cause":"ước lượng thấp",'
-        '"adjustment":"tăng 20% thời lượng","evidence":{"variance":0.2}}\n```'
+        '{"effective":"học buổi sáng","difficulty":"ước lượng thấp",'
+        '"cause":"estimate_error","confidence":0.6,"recommended_action":"split_task",'
+        '"rationale":"cần thêm bằng chứng","task_id":"","affected_kcs":[]}\n```'
     )
     monkeypatch.setattr(
         "src.agents.workflows.reflect.get_agent_llm",
@@ -688,7 +864,8 @@ def test_reflect_creates_structured_draft_and_hitl(monkeypatch):
             "effective_week_start": "2026-10-05",
         },
     })
-    assert result["reflection_draft"]["adjustment"] == "tăng 20% thời lượng"
+    assert result["reflection_draft"]["adjustment"].startswith("Giữ kế hoạch hiện tại")
+    assert result["reflection_draft"]["hypothesis"]["cause"] == "unknown"
     assert result["reflection_draft"]["week_start"] == "2026-09-28"
     assert result["reflection_draft"]["effective_week_start"] == "2026-10-05"
     assert result["pending_action"]["type"] == "confirm_adjustment"
@@ -712,7 +889,8 @@ def test_activity_reflect_creates_checkpoint_without_weekly_adjustment(monkeypat
     content = (
         "Bạn đã xác định được phần còn vướng.\n```json\n"
         '{"effective":"hiểu vòng lặp cơ bản","difficulty":"vòng lặp lồng nhau",'
-        '"next_step":"ôn ví dụ trong slide","evidence":{"completion":50}}\n```'
+        '"cause":"unknown","confidence":0.4,"recommended_action":"collect_more_evidence",'
+        '"rationale":"cần thêm bằng chứng","task_id":"","affected_kcs":[]}\n```'
     )
     monkeypatch.setattr(
         "src.agents.workflows.reflect.get_agent_llm",
@@ -730,9 +908,73 @@ def test_activity_reflect_creates_checkpoint_without_weekly_adjustment(monkeypat
         }
     )
     assert result["reflection_draft"]["scope"] == "activity"
-    assert result["reflection_draft"]["next_step"] == "ôn ví dụ trong slide"
+    assert result["reflection_draft"]["next_step"].startswith("Giữ kế hoạch hiện tại")
     assert result["pending_action"]["type"] == "save_activity_reflection"
     assert "tuần sau" not in result["response"].lower()
+
+
+def test_activity_reflect_returns_english_when_requested(monkeypatch):
+    captured = {}
+
+    class ReflectModel:
+        def invoke(self, messages):
+            captured["prompt"] = messages[-1].content
+            return SimpleNamespace(
+                content=(
+                    '{"effective":"completed the planned work","difficulty":"no obstacle was recorded",'
+                    '"cause":"unknown","confidence":0.4,"recommended_action":"collect_more_evidence",'
+                    '"rationale":"more evidence is needed","task_id":"","affected_kcs":[]}'
+                )
+            )
+
+    monkeypatch.setattr(
+        "src.agents.workflows.reflect.get_agent_llm",
+        lambda **_kwargs: ReflectModel(),
+    )
+    result = reflect_node(
+        {
+            "query": "Reflect on this study session.",
+            "request": {"locale": "en"},
+            "progress_metrics": {
+                "reflection_scope": "activity",
+                "activity": {"task_id": "DB201:task-1"},
+                "completion": 100,
+            },
+        }
+    )
+
+    assert '"OUTPUT_LANGUAGE":"English"' in captured["prompt"]
+    assert "What worked:" in result["response"]
+    assert "What remains difficult:" in result["response"]
+    assert "Next step: Keep the current plan and collect more evidence before making changes" in result["response"]
+    assert "Confirm before saving this activity reflection." in result["response"]
+    assert "Điều hiệu quả:" not in result["response"]
+
+
+def test_english_activity_reflect_fallback_preserves_structured_answers(monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.workflows.reflect.get_agent_llm",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("model unavailable")),
+    )
+    result = reflect_node(
+        {
+            "query": (
+                "Activity outcome: Completed the planned work.\n"
+                "What helped or caused difficulty: Self-assessment: Can continue independently. Obstacle: None.\n"
+                "Next step: Move to the next task."
+            ),
+            "request": {"locale": "en"},
+            "progress_metrics": {
+                "reflection_scope": "activity",
+                "activity": {"task_id": "DB201:task-1"},
+            },
+        }
+    )
+
+    assert result["reflection_draft"]["effective"] == "Completed the planned work"
+    assert result["reflection_draft"]["difficulty"].startswith("Self-assessment: Can continue independently")
+    assert "What worked: Completed the planned work" in result["response"]
+    assert "Confirm before saving this activity reflection." in result["response"]
 
 
 def test_reflect_clamps_untrusted_planning_signal(monkeypatch):
@@ -758,11 +1000,285 @@ def test_reflect_clamps_untrusted_planning_signal(monkeypatch):
     signal = result["reflection_draft"]["planning_signal"]
     assert signal == {
         "cause": "unknown",
-        "unrecognized_cause": "delete_all_deadlines",
-        "duration_factor": 1.5,
-        "follow_up_minutes": 180,
-        "affected_kcs": ["kc-1"],
-        "task_id": "task-1",
+        "duration_factor": 1.0,
+        "follow_up_minutes": 0,
+        "affected_kcs": [],
+        "task_id": "",
+    }
+    assert "MODEL_PLANNING_FIELDS_IGNORED" in result["reflection_draft"]["validation_warnings"]
+
+
+def test_reflect_uses_compact_fast_contract_and_server_task_id(monkeypatch):
+    captured = {}
+
+    class ReflectModel:
+        def invoke(self, messages):
+            captured["prompt"] = messages[-1].content
+            return SimpleNamespace(
+                content=(
+                    '{"effective":"đã hoàn thành phần chính","difficulty":"còn vướng JOIN",'
+                    '"cause":"knowledge_gap","confidence":0.8,"recommended_action":"review_verified_kc",'
+                    '"rationale":"cần kiểm tra thêm","affected_kcs":["JOIN","KC giả"],'
+                    '"task_id":"task-giả"}'
+                )
+            )
+
+    def factory(**kwargs):
+        captured["kwargs"] = kwargs
+        return ReflectModel()
+
+    monkeypatch.setattr("src.agents.workflows.reflect.get_agent_llm", factory)
+    result = reflect_node(
+        {
+            "query": "Em làm được truy vấn cơ bản nhưng JOIN còn khó.",
+            "learner_profile": {"private_history": "x" * 5000},
+            "misconceptions": [{"content": "y" * 5000}],
+            "mastery_profile": {"JOIN": {"level": "conceptual"}},
+            "progress_metrics": {
+                "reflection_scope": "activity",
+                "week_start": "2026-10-12",
+                "activity": {"task_id": "DB201:task-1", "planned_minutes": 60, "actual_minutes": 75},
+                "sessions": [{"task_id": "DB201:task-1", "planned_minutes": 60, "actual_minutes": 75}],
+                "session_count": 1,
+                "planned_minutes": 60,
+                "actual_minutes": 75,
+                "data_status": "observed",
+            },
+        }
+    )
+
+    assert captured["kwargs"] == {
+        "temperature": 0.1,
+        "max_tokens": 180,
+        "task": "reflect",
+        "complexity": "simple",
+        "timeout": 8.0,
+        "max_retries": 0,
+    }
+    assert "private_history" not in captured["prompt"]
+    assert "misconceptions" not in captured["prompt"]
+    assert len(captured["prompt"]) < 3500
+    assert result["reflection_draft"]["planning_signal"]["task_id"] == "DB201:task-1"
+    assert result["reflection_draft"]["planning_signal"]["affected_kcs"] == []
+    assert result["reflection_draft"]["planning_signal"]["duration_factor"] == 1.0
+    assert "task-giả" not in result["response"]
+
+
+def test_structured_activity_reflect_calls_luna_with_deidentified_payload(monkeypatch):
+    captured = {}
+
+    class ReflectModel:
+        def invoke(self, messages):
+            captured["prompt"] = messages[-1].content
+            return SimpleNamespace(
+                content=(
+                    '{"effective":"đã hoàn thành phần chính","difficulty":"còn cần kiểm tra",'
+                    '"cause":"unknown","confidence":0.4,'
+                    '"recommended_action":"collect_more_evidence","rationale":"dữ liệu còn ít",'
+                    '"task_id":"","affected_kcs":[]}'
+                )
+            )
+
+    def factory(**kwargs):
+        captured["kwargs"] = kwargs
+        return ReflectModel()
+
+    monkeypatch.setattr("src.agents.workflows.reflect.get_agent_llm", factory)
+    result = reflect_node(
+        {
+            "query": (
+                "Kết quả sau hoạt động: Em là Nguyễn Văn An, email an@example.com, đã làm xong 35:340\n"
+                "Điều hỗ trợ hoặc gây khó khăn: số 0912345678, [EV-secret], https://private.example\n"
+                "Bước tiếp theo: kiểm tra lại"
+            ),
+            "progress_metrics": {
+                "reflection_scope": "activity",
+                "activity": {
+                    "id": "activity-secret",
+                    "block_id": "blk-secret",
+                    "task_id": "35:340",
+                    "course_id": "course-secret",
+                    "course_code": "DB201",
+                    "source_ref": "EV-secret",
+                    "planned_minutes": 70,
+                    "actual_minutes": 7,
+                    "completion_percent": 50,
+                    "remaining_minutes": 35,
+                },
+            },
+        }
+    )
+    prompt = captured["prompt"]
+    assert captured["kwargs"]["complexity"] == "simple"
+    assert captured["kwargs"]["max_tokens"] == 180
+    for secret in (
+        "Nguyễn Văn An",
+        "an@example.com",
+        "0912345678",
+        "35:340",
+        "EV-secret",
+        "https://private.example",
+        "activity-secret",
+        "blk-secret",
+        "course-secret",
+        "DB201",
+    ):
+        assert secret not in prompt
+    assert "[email]" in prompt and "[phone]" in prompt and "[name]" in prompt
+    assert result["reflection_draft"]["routing"]["model_tier"] == "luna"
+
+
+def test_reflect_frontend_contract_falls_back_safely_when_model_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.workflows.reflect.get_agent_llm",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("structured reflection must not call a model")),
+    )
+    result = reflect_node(
+        {
+            "query": (
+                "Kết quả sau hoạt động: Em hoàn thành truy vấn cơ bản\n"
+                "Điều hỗ trợ hoặc gây khó khăn: JOIN mất lâu hơn dự kiến\n"
+                "Bước tiếp theo: Ôn một ví dụ JOIN"
+            ),
+            "progress_metrics": {
+                "reflection_scope": "activity",
+                "planned_minutes": 60,
+                "actual_minutes": 75,
+                "activity": {
+                    "task_id": "DB201:task-1",
+                    "planned_minutes": 60,
+                    "actual_minutes": 75,
+                },
+            },
+        }
+    )
+
+    draft = result["reflection_draft"]
+    assert draft["effective"] == "Em hoàn thành truy vấn cơ bản"
+    assert draft["difficulty"] == "JOIN mất lâu hơn dự kiến"
+    assert draft["next_step"].startswith("Giữ kế hoạch hiện tại")
+    assert draft["planning_signal"] == {
+        "cause": "unknown",
+        "duration_factor": 1.0,
+        "follow_up_minutes": 0,
+        "affected_kcs": [],
+        "task_id": "DB201:task-1",
+    }
+
+
+def test_weekly_reflect_uses_safe_remaining_work_advice_and_hides_internal_ids(monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.workflows.reflect.get_agent_llm",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("structured reflection must not call a model")),
+    )
+    result = reflect_node(
+        {
+            "query": (
+                "Điều hiệu quả: Hoàn thành bài được giao 35:340 [EV-916deebeebd148b981cb]\n"
+                "Nguyên nhân lệch: Bắt đầu muộn và chưa hiểu bài kỹ\n"
+                "Điều chỉnh tuần sau: Tăng hệ số 1,25 và ưu tiên chiều–tối"
+            ),
+            "progress_metrics": {
+                "reflection_scope": "weekly",
+                "week_start": "2026-10-05",
+                "week_end": "2026-10-11",
+                "session_count": 1,
+                "planned_minutes": 70,
+                "actual_minutes": 7,
+                "assessment_evidence": [],
+                "sessions": [
+                    {
+                        "task_id": "35:340",
+                        "planned_minutes": 70,
+                        "actual_minutes": 7,
+                        "completion_percent": 50,
+                        "remaining_minutes": 35,
+                        "time_source": "timer",
+                        "unobserved_gap": True,
+                        "source_ref": "EV-916deebeebd148b981cb",
+                        "activity_type": "unknown",
+                    }
+                ],
+            },
+        }
+    )
+
+    response = result["response"]
+    assert "05/10–11/10" in response
+    assert "70 phút dự kiến và 7 phút thực tế" in response
+    assert "hoàn thành 50%" in response
+    assert "còn khoảng 35 phút" in response
+    assert "chưa điều chỉnh hệ số thời lượng chung" in response
+    assert "sở thích cá nhân" in response
+    assert "một phiên 35 phút" in response
+    assert "1,25" not in response
+    assert "35:340" not in response
+    assert "EV-" not in response
+    assert result["reflection_draft"]["planning_signal"]["duration_factor"] == 1.0
+    assert result["reflection_draft"]["timing_evidence_count"] == 0
+
+
+def test_complex_weekly_reflect_routes_to_reasoning_tier(monkeypatch):
+    captured = {}
+
+    class ReflectModel:
+        def invoke(self, _messages):
+            return SimpleNamespace(
+                content=(
+                    '{"effective":"đã duy trì việc học","difficulty":"thời lượng còn lệch",'
+                    '"cause":"estimate_error","confidence":0.7,"recommended_action":"split_task",'
+                    '"rationale":"nhiều phiên có độ lệch","task_id":"","affected_kcs":[]}'
+                )
+            )
+
+    def factory(**kwargs):
+        captured.update(kwargs)
+        return ReflectModel()
+
+    monkeypatch.setattr("src.agents.workflows.reflect.get_agent_llm", factory)
+    result = reflect_node(
+        {
+            "query": "Hãy phân tích tuần học có nhiều môn của em.",
+            "progress_metrics": {
+                "reflection_scope": "weekly",
+                "session_count": 3,
+                "sessions": [
+                    {"course_code": "DB201", "planned_minutes": 60, "actual_minutes": 90},
+                    {"course_code": "WEB201", "planned_minutes": 60, "actual_minutes": 95},
+                    {"course_code": "DB201", "planned_minutes": 60, "actual_minutes": 90},
+                ],
+            },
+        }
+    )
+    assert captured["complexity"] == "complex"
+    assert captured["max_tokens"] == 180
+    assert captured["timeout"] == 12.0
+    assert result["reflection_draft"]["routing"]["model_tier"] == "sol"
+
+
+def test_confirmed_reflect_hands_schedule_change_to_recover():
+    draft = {
+        "scope": "activity",
+        "recommendation": {
+            "action": "complete_remaining_work",
+            "minutes": 35,
+            "requires_recover": True,
+            "reason": "observed_remaining_work",
+            "task_id": "DB201:1",
+        },
+    }
+    result = reflect_node(
+        {
+            "query": "Xác nhận",
+            "pending_action": {"workflow": "reflect", "payload": draft},
+        }
+    )
+    assert result["status"] == "completed"
+    assert result["output"]["reflect_handoff"] == {
+        "next_workflow": "recover",
+        "reason": "observed_remaining_work",
+        "task_id": "DB201:1",
+        "requested_minutes": 35,
     }
 
 

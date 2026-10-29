@@ -19,14 +19,14 @@ export_settings = Settings(app_name='AI20K Agent', app_env='test', app_port=8000
         headers = await login(client, monkeypatch)
         missing_csrf = await client.post("/api/v1/calendar/pacewise-study-plan.ics", json=payload)
         exported = await client.post("/api/v1/calendar/pacewise-study-plan.ics", json=payload, headers=headers)
-    
+
         assert unauthenticated.status_code == 401
         assert missing_csrf.status_code == 403
         assert exported.status_code == 200
         assert exported.headers["content-type"].startswith("text/calendar")
 &gt;       assert exported.headers["cache-control"] == "no-store"
 E       AssertionError: assert 'no-store, private' == 'no-store'
-E         
+E
 E         - no-store
 E         + no-store, private
 
@@ -72,7 +72,7 @@ monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001D31CE9B410&g
     @pytest.mark.asyncio
     async def test_real_simulator_quiz_override_flows_into_pacewise_plan_and_completion(simulator, monkeypatch):
         from datetime import UTC, datetime
-    
+
         from src.api import lms_integration, routes
         from src.security import SessionContext
         from src.services.planning import build_plan_draft
@@ -82,7 +82,7 @@ monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001D31CE9B410&g
 &gt;           teacher = await login(http, "instructor1@test.edu")
                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests\test_services\test_lms_file_integration.py:139: 
+tests\test_services\test_lms_file_integration.py:139:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 client = &lt;httpx.AsyncClient object at 0x000001D31D59B8D0&gt;
@@ -109,7 +109,7 @@ vector_backend = (&lt;qdrant_client.qdrant_client.QdrantClient object at 0x00000
 &gt;           teacher = await login(http, "instructor1@test.edu")
                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests\test_services\test_lms_file_integration.py:190: 
+tests\test_services\test_lms_file_integration.py:190:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 client = &lt;httpx.AsyncClient object at 0x000001D31D825BD0&gt;
@@ -130,13 +130,13 @@ monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001D31CE2EC10&g
         from src.api import lms_files as file_api
         from src.main import app as pacewise
         from src.security import SessionContext, get_current_session
-    
+
         settings = get_settings()
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=simulator), base_url="http://lms.test") as http:
 &gt;           teacher = await login(http, "instructor1@test.edu")
                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests\test_services\test_lms_file_integration.py:277: 
+tests\test_services\test_lms_file_integration.py:277:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 client = &lt;httpx.AsyncClient object at 0x000001D31D845D90&gt;
@@ -157,7 +157,7 @@ tests\test_services\test_lms_file_integration.py:126: KeyError</failure></testca
 &gt;           teacher = await login(http, "instructor1@test.edu")
                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests\test_services\test_lms_file_integration.py:310: 
+tests\test_services\test_lms_file_integration.py:310:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 client = &lt;httpx.AsyncClient object at 0x000001D31D930990&gt;

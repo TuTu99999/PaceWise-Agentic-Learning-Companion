@@ -20,11 +20,15 @@ from src.config import Settings
 from src.db import SessionLocal
 from src.persistence_models import LmsFileIndex
 from src.services.document_extraction import DocumentLimitError, bounded_extract
-from src.services.document_roles import filter_student_chunks
+from src.services.document_roles import document_matches_course, filter_student_chunks
 from src.services.file_indexing import bounded_index
 from src.services.lms_client import LMSClient
 
 SUPPORTED = {".pdf", ".docx", ".pptx", ".txt", ".md"}
+
+
+class CourseSubjectMismatchError(ValueError):
+    pass
 
 
 def validate_document(data: bytes, name: str, max_pages: int = 500) -> None:
@@ -97,9 +101,27 @@ async def sync_course_files(client: LMSClient, settings: Settings, course_id: in
         )
         with SessionLocal() as db:
             row = db.get(LmsFileIndex, identifier)
+            if row and row.resource_version == version:
+                try:
+                    existing_chunks = json.loads(row.chunks_json or "[]")
+                except json.JSONDecodeError:
+                    existing_chunks = []
+                if existing_chunks and not document_matches_course(
+                    existing_chunks,
+                    str(item.get("course_name") or ""),
+                ):
+                    row.metadata_json = json.dumps(item, ensure_ascii=False)
+                    row.failure_reason = "course_subject_mismatch"
+                    row.last_error = "Tài liệu ghi tên môn khác với môn đang chọn. Hãy tải vào đúng môn học."
+                    if row.status != "unavailable":
+                        row.status = "delete_pending"
+                    db.commit()
+                    continue
             # A failed unchanged file stays failed until an explicit retry. Sync
             # must not reset the attempt budget or repeatedly embed old bytes.
             if row and row.resource_version == version and not revoked and row.status not in {"delete_pending", "unavailable"}:
+                row.metadata_json = json.dumps({**json.loads(row.metadata_json or "{}"), **item}, ensure_ascii=False)
+                db.commit()
                 continue
             row = row or LmsFileIndex(
                 id=identifier, institution_id=settings.institution_id, course_id=course_id, file_id=int(item["id"])
@@ -148,7 +170,8 @@ def claim_file(
         return {"id": row.id, "course_id": row.course_id, "file_id": row.file_id,
                 "version": row.resource_version, "item": json.loads(row.metadata_json),
                 "chunks": row.chunks_json, "attempts": row.attempts, "previous": previous,
-                "lease_owner": owner}
+                "lease_owner": owner, "last_error": row.last_error,
+                "failure_reason": row.failure_reason}
 
 
 def update_claim(job, **values):
@@ -249,6 +272,8 @@ async def process_file_extractions(client: LMSClient, settings: Settings) -> int
             chunks, excluded = filter_student_chunks(chunks, declared_role)
             if not chunks:
                 raise ValueError("no_student_visible_content")
+            if not document_matches_course(chunks, str(item.get("course_name") or "")):
+                raise CourseSubjectMismatchError("course_subject_mismatch")
             resources = []
             for index, chunk in enumerate(chunks):
                 # Never claim synthetic DOCX/TXT pagination as a real page number.
@@ -291,6 +316,8 @@ async def process_file_extractions(client: LMSClient, settings: Settings) -> int
             message = "Không đọc được nội dung; kiểm tra file có hợp lệ, không khóa và không vượt giới hạn xử lý."
             if isinstance(exc, DocumentLimitError):
                 message = "Tài liệu vượt giới hạn text/đoạn xử lý. Hãy tách nhỏ file."
+            elif isinstance(exc, CourseSubjectMismatchError):
+                message = "Tài liệu ghi tên môn khác với môn đang chọn. Hãy tải vào đúng môn học."
             elif isinstance(exc, TimeoutError):
                 message = "Trích xuất quá thời gian cho phép. Hãy thử lại hoặc tách nhỏ file."
             elif not terminal:
@@ -317,7 +344,13 @@ def process_file_indexes(settings: Settings) -> int:
         try:
             with file_claim_heartbeat(settings, job):
                 bounded_index(job, settings)
-            update_claim(job, status="unavailable" if deleting else "indexed", last_error="", failure_reason="")
+            preserve_mismatch = deleting and job.get("failure_reason") == "course_subject_mismatch"
+            update_claim(
+                job,
+                status="unavailable" if deleting else "indexed",
+                last_error=str(job.get("last_error") or "") if preserve_mismatch else "",
+                failure_reason="course_subject_mismatch" if preserve_mismatch else "",
+            )
         except Exception as exc:
             update_claim(job, status=("delete_pending" if deleting else "retry")
                          if job["attempts"] < settings.worker_max_attempts else "failed",

@@ -3,6 +3,9 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Input, Textarea } from '../ui/Field';
 import type { TeacherLesson, TeacherManagementData, TeacherTask, GradedQuestion } from '../../types/teacherManagement';
+import { uploadTeacherDocument, type CourseDocumentRole } from '../../services/api';
+import { coursePdfMaxMb } from '../../services/courseSource';
+import { useLocale } from '../../i18n/LocaleContext';
 export { PdfUpload } from './PdfUpload';
 
 export const taskKinds = { assignment: 'Bài tập', quiz: 'Quiz tính điểm', midterm: 'Giữa kỳ', final_exam: 'Cuối kỳ' };
@@ -15,14 +18,17 @@ const instant = (value: string) => new Date(`${value}:00+07:00`).toISOString();
 type Mutate = (target: string, payload: object, method?: 'POST' | 'PUT') => Promise<void>;
 
 export function ResourcePicker({ data, ids, onChange }: { data: TeacherManagementData; ids: number[]; onChange: (ids: number[]) => void }) {
-  return <fieldset className="rounded-xl border border-line p-3"><legend className="px-1 text-sm font-semibold">Tài liệu môn học đính kèm</legend>
+  const { t } = useLocale();
+  return <fieldset className="rounded-xl border border-line p-3"><legend className="px-1 text-sm font-semibold">{t('Tài liệu đã tải trước đó')}</legend>
     <div className="max-h-40 space-y-2 overflow-auto">{data.resources.length ? data.resources.map((file) => <label key={file.id} className="flex items-start gap-2 text-sm">
       <input type="checkbox" checked={ids.includes(file.id)} onChange={(event) => onChange(event.target.checked ? [...ids, file.id] : ids.filter((id) => id !== file.id))} />{file.title}
-    </label>) : <p className="text-sm text-muted">Chưa có PDF. Dùng nút “Thêm PDF” trước khi tạo.</p>}</div>
+    </label>) : <p className="text-sm text-muted">{t('Chưa có tài liệu đã tải trước đó.')}</p>}</div>
   </fieldset>;
 }
 
-export function TaskForm({ item, data, mutate, onClose }: { item?: TeacherTask; data: TeacherManagementData; mutate: Mutate; onClose: () => void }) {
+type PendingTaskDocument = { file: File; contentRole: CourseDocumentRole };
+
+export function TaskForm({ item, data, courseId, mutate, onClose }: { item?: TeacherTask; data: TeacherManagementData; courseId: string; mutate: Mutate; onClose: () => void }) {
   const [title, setTitle] = useState(item?.title ?? ''); const [description, setDescription] = useState(item?.description ?? '');
   const [chapter, setChapter] = useState(item?.chapter ?? '');
   const [kind, setKind] = useState<TeacherTask['kind']>(item?.kind ?? 'assignment');
@@ -30,6 +36,7 @@ export function TaskForm({ item, data, mutate, onClose }: { item?: TeacherTask; 
   const [points, setPoints] = useState(item?.points_possible ?? 10); const [published, setPublished] = useState(item?.published ?? false);
   const [group, setGroup] = useState(String(item?.group_id ?? '')); const [ids, setIds] = useState(item?.resource_ids ?? []);
   const [questions, setQuestions] = useState<GradedQuestion[]>(item?.questions ?? []);
+  const [documents, setDocuments] = useState<PendingTaskDocument[]>([]);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const submitted = item?.has_submissions;
   const save = async (event: FormEvent) => {
@@ -37,8 +44,16 @@ export function TaskForm({ item, data, mutate, onClose }: { item?: TeacherTask; 
     try {
       if (kind === 'quiz' && published && !questions.length) throw new Error('Quiz xuất bản phải có ít nhất một câu hỏi.');
       if (kind === 'quiz' && questions.length && Math.abs(questions.reduce((sum, question) => sum + question.points, 0) - points) > 0.005) throw new Error('Tổng điểm câu hỏi phải bằng điểm tối đa của quiz.');
+      if (documents.length && !chapter.trim()) throw new Error('Nhập chương / module để AI gắn đề bài đúng phạm vi.');
+      const uploadedIds: number[] = [];
+      for (const document of documents) {
+        const receipt = await uploadTeacherDocument(courseId, document.file, chapter.trim(), document.contentRole);
+        if (!receipt?.fileId) throw new Error('Đã tải file nhưng chưa nhận được mã tài liệu để gắn vào nhiệm vụ.');
+        uploadedIds.push(receipt.fileId);
+      }
+      const resourceIds = [...new Set([...ids, ...uploadedIds])];
       await mutate(item ? `tasks/${item.id}` : 'tasks', { title, description, chapter, kind, due_at: instant(due), points_possible: points,
-        published, group_id: group ? Number(group) : null, resource_ids: ids, questions: kind === 'quiz' ? questions : [],
+        published, group_id: group ? Number(group) : null, resource_ids: resourceIds, questions: kind === 'quiz' ? questions : [],
         ...(item ? { expected_version: item.version } : {}) }, item ? 'PUT' : 'POST');
       onClose();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được nhiệm vụ.'); }
@@ -68,6 +83,37 @@ export function TaskForm({ item, data, mutate, onClose }: { item?: TeacherTask; 
         <Button type="button" variant="secondary" disabled={submitted} onClick={() => setQuestions([...questions, { prompt: '', options: ['', '', '', ''], correct_answer: '', points: 1 }])}>Thêm câu hỏi</Button>
         <p className="text-sm text-muted">Tổng điểm câu hỏi: {questions.reduce((sum, q) => sum + q.points, 0)} / {points}.</p>
       </fieldset>}
+      <fieldset className="space-y-3 rounded-xl border border-line p-3">
+        <legend className="px-1 text-sm font-semibold">Đề bài để AI phân tích</legend>
+        <p className="text-sm text-muted">Đính kèm PDF hoặc Word ngay tại đây. File sẽ tự được gắn vào nhiệm vụ và Plan Agent dùng nội dung đã xử lý để chia bài thành các phiên Do nhỏ hơn.</p>
+        <label className={`inline-flex min-h-11 items-center rounded-xl border border-line bg-white px-4 text-sm font-semibold ${busy ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
+          Thêm PDF hoặc Word (≤ {coursePdfMaxMb} MB/file)
+          <input aria-label="Đính kèm đề bài PDF hoặc Word" type="file" multiple
+            accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
+            disabled={busy} className="sr-only" onChange={(event) => {
+              const files = Array.from(event.target.files ?? []); event.target.value = '';
+              if (!files.length) return;
+              if (files.length + documents.length > 10) { setError('Mỗi nhiệm vụ đính kèm tối đa 10 file.'); return; }
+              if (files.some((file) => !file.size || file.size > coursePdfMaxMb * 1024 * 1024 || !/\.(pdf|docx)$/i.test(file.name))) {
+                setError(`Chỉ nhận PDF hoặc DOCX có nội dung, tối đa ${coursePdfMaxMb} MB/file.`); return;
+              }
+              setError(''); setDocuments((current) => [...current, ...files.map((file): PendingTaskDocument => ({ file, contentRole: 'student_assignment_brief' }))]);
+            }} />
+        </label>
+        {documents.map((document, index) => <div key={`${document.file.name}-${document.file.lastModified}-${index}`} className="space-y-2 rounded-xl bg-surface-subtle p-3">
+          <p className="break-words text-sm font-medium">{document.file.name}</p>
+          <label className="block space-y-1 text-sm font-semibold">Nội dung file
+            <select aria-label={`Nội dung file ${document.file.name}`} className={inputClass} disabled={busy} value={document.contentRole}
+              onChange={(event) => setDocuments((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, contentRole: event.target.value as CourseDocumentRole } : row))}>
+              <option value="student_assignment_brief">Đề bài cho sinh viên</option>
+              <option value="student_rubric">Rubric công khai</option>
+              <option value="mixed_assignment_package">Word có đề + rubric + đáp án</option>
+            </select>
+          </label>
+          <Button type="button" variant="ghost" disabled={busy} onClick={() => setDocuments((current) => current.filter((_, rowIndex) => rowIndex !== index))}>Bỏ file</Button>
+        </div>)}
+        <p className="text-sm text-muted">Nếu Word có cả đáp án, chọn đúng loại để Plan, Do và chatbot chỉ nhận bản đã loại đáp án.</p>
+      </fieldset>
       <ResourcePicker data={data} ids={ids} onChange={setIds} />
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={published} onChange={(event) => setPublished(event.target.checked)} />Xuất bản cho sinh viên</label>
       {error && <p role="alert" className="text-sm text-danger-ink">{error}</p>}
@@ -111,6 +157,7 @@ export function WeightsForm({ data, mutate, onClose }: { data: TeacherManagement
 }
 
 export function LessonForm({ item, data, mutate, onClose, previewOnly = false }: { item?: TeacherLesson; data: TeacherManagementData; mutate: Mutate; onClose: () => void; previewOnly?: boolean }) {
+  const { locale, t } = useLocale();
   const [title, setTitle] = useState(item?.title ?? ''); const [description, setDescription] = useState(item?.description ?? '');
   const [start, setStart] = useState(item ? localDateTime(item.starts_at) : ''); const [end, setEnd] = useState(item ? localDateTime(item.ends_at) : '');
   const [mode, setMode] = useState<TeacherLesson['mode']>(item?.mode ?? 'offline'); const [location, setLocation] = useState(item?.location ?? '');
@@ -118,27 +165,26 @@ export function LessonForm({ item, data, mutate, onClose, previewOnly = false }:
   const [repeat, setRepeat] = useState(2); const [ids, setIds] = useState(item?.resource_ids ?? []);
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const duration = start && end ? (Date.parse(`${end}:00+07:00`) - Date.parse(`${start}:00+07:00`)) / 60000 : null;
-  return <Modal open onClose={() => !busy && onClose()} title={previewOnly ? 'Sửa các buổi tương lai của chuỗi' : item ? 'Sửa buổi học' : 'Thêm buổi học'} description={previewOnly ? 'Đổi tên, hình thức và giờ cho các buổi còn lại. Ngày/giờ dịch cùng độ lệch so với buổi đang chọn; số buổi không đổi. Chỉ lưu sau khi xem và xác nhận.' : 'GMT+7. Buổi học được cập nhật cho sinh viên; không tự thay kế hoạch tự học.'}>
+  return <Modal open onClose={() => !busy && onClose()} title={t(previewOnly ? 'Sửa các buổi tương lai của chuỗi' : item ? 'Sửa buổi học' : 'Thêm buổi học')} description={previewOnly ? t('Đổi tên, hình thức và giờ cho các buổi còn lại. Ngày/giờ dịch cùng độ lệch so với buổi đang chọn; số buổi không đổi. Chỉ lưu sau khi xem và xác nhận.') : undefined}>
     <form className="space-y-4" onSubmit={async (event) => { event.preventDefault(); setBusy(true); setError(''); try {
       if (!duration || duration <= 0 || duration > 720) throw new Error('Thời lượng phải lớn hơn 0 và tối đa 12 giờ.');
       await mutate(item ? `lessons/${item.id}` : 'lessons', { title, description, starts_at: instant(start), ends_at: instant(end), mode,
         location, meeting_url: mode === 'online' ? url : '', repeat_count: repeatWeekly ? repeat : 1, resource_ids: ids,
         ...(item ? { expected_version: item.version } : {}) }, item ? 'PUT' : 'POST'); onClose();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được buổi học.'); } finally { setBusy(false); } }}>
-      <Input label="Tên buổi học" required maxLength={255} value={title} onChange={(event) => setTitle(event.target.value)} />
-      <div className="grid gap-3 sm:grid-cols-2"><Input label="Bắt đầu (GMT+7)" type="datetime-local" required value={start} onChange={(event) => setStart(event.target.value)} />
-        <Input label="Kết thúc (GMT+7)" type="datetime-local" required value={end} onChange={(event) => setEnd(event.target.value)} /></div>
-      {duration !== null && <p className="text-sm">Thời lượng: {duration} phút.</p>}
-      <label className="text-sm font-semibold">Hình thức<select aria-label="Hình thức" className={inputClass} value={mode} onChange={(event) => setMode(event.target.value as TeacherLesson['mode'])}><option value="offline">Offline</option><option value="online">Online</option></select></label>
-      {mode === 'offline' ? <Input label="Phòng / địa điểm" maxLength={255} value={location} onChange={(event) => setLocation(event.target.value)} /> : <Input label="Link buổi học (HTTPS)" type="url" pattern="https://.*" required maxLength={500} value={url} onChange={(event) => setUrl(event.target.value)} />}
-      <Textarea label="Nội dung / chuẩn bị" maxLength={5000} value={description} onChange={(event) => setDescription(event.target.value)} />
-      {!item && <fieldset className="space-y-3 rounded-xl border border-line p-3"><legend className="px-1 text-sm font-semibold">Lặp lịch (tùy chọn)</legend>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={repeatWeekly} onChange={(event) => setRepeatWeekly(event.target.checked)} />Lặp lại buổi này mỗi tuần</label>
-        {repeatWeekly && <Input label="Tổng số buổi trong chuỗi (2–16)" type="number" min={2} max={16} required value={repeat} onChange={(event) => setRepeat(Number(event.target.value))} />}
-        <p className="text-sm text-muted">Ví dụ 8 buổi sẽ tạo buổi hiện tại và 7 tuần tiếp theo. Buổi học một lần không cần bật.</p>
+      <Input label={t('Tên buổi học')} required maxLength={255} value={title} onChange={(event) => setTitle(event.target.value)} />
+      <div className="grid gap-3 sm:grid-cols-2"><Input label={t('Bắt đầu (GMT+7)')} type="datetime-local" required value={start} onChange={(event) => setStart(event.target.value)} />
+        <Input label={t('Kết thúc (GMT+7)')} type="datetime-local" required value={end} onChange={(event) => setEnd(event.target.value)} /></div>
+      {duration !== null && <p className="text-sm">{locale === 'en' ? `Duration: ${duration} minutes.` : `Thời lượng: ${duration} phút.`}</p>}
+      <label className="text-sm font-semibold">{t('Hình thức')}<select aria-label={t('Hình thức')} className={inputClass} value={mode} onChange={(event) => setMode(event.target.value as TeacherLesson['mode'])}><option value="offline">Offline</option><option value="online">Online</option></select></label>
+      {mode === 'offline' ? <Input label={t('Phòng / địa điểm')} maxLength={255} value={location} onChange={(event) => setLocation(event.target.value)} /> : <Input label={t('Link buổi học (HTTPS)')} type="url" pattern="https://.*" required maxLength={500} value={url} onChange={(event) => setUrl(event.target.value)} />}
+      <Textarea label={t('Nội dung / chuẩn bị')} maxLength={5000} value={description} onChange={(event) => setDescription(event.target.value)} />
+      {!item && <fieldset className="space-y-3 rounded-xl border border-line p-3"><legend className="px-1 text-sm font-semibold">{t('Lặp lịch (tùy chọn)')}</legend>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={repeatWeekly} onChange={(event) => setRepeatWeekly(event.target.checked)} />{t('Lặp lại buổi này mỗi tuần')}</label>
+        {repeatWeekly && <Input label={t('Tổng số buổi trong chuỗi (2–16)')} type="number" min={2} max={16} required value={repeat} onChange={(event) => setRepeat(Number(event.target.value))} />}
       </fieldset>}
       <ResourcePicker data={data} ids={ids} onChange={setIds} />{error && <p role="alert" className="text-danger-ink">{error}</p>}
-      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" disabled={busy} onClick={onClose}>Đóng</Button><Button type="submit" loading={busy}>{previewOnly ? 'Xem trước thay đổi chuỗi' : 'Lưu buổi học'}</Button></div>
+      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" disabled={busy} onClick={onClose}>{t('Đóng')}</Button><Button type="submit" loading={busy}>{t(previewOnly ? 'Xem trước thay đổi chuỗi' : 'Lưu buổi học')}</Button></div>
     </form>
   </Modal>;
 }

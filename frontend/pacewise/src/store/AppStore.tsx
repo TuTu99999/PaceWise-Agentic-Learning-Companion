@@ -198,6 +198,7 @@ export type Action =
   | { type: 'SET_WIZARD_INPUT'; input: PlanInput }
   | { type: 'SET_DRAFT'; draft: PlanDraft | null }
   | { type: 'SAVE_CALENDAR_DRAFT'; blocks: TimeBlock[] }
+  | { type: 'CONFIRM_MANUAL_BLOCK_TIME'; block: TimeBlock }
   | { type: 'UPDATE_DRAFT_BLOCK'; block: TimeBlock }
   | { type: 'REMOVE_DRAFT_BLOCK'; id: string }
   | { type: 'SAVE_PLAN'; confirmedDraft?: PlanDraft }
@@ -222,7 +223,7 @@ export type Action =
   | { type: 'SUBMIT_QUICK_CHECK'; result: QuickCheckResult; reviewItem?: ReviewItem }
   | { type: 'ADD_CLASS_GUIDANCE'; topic: string; message: string }
   | { type: 'APPLY_RECOVERY'; blocks: TimeBlock[]; impactId?: string }
-  | { type: 'SAVE_REFLECTION'; reflectionKey?: string; courseId: string; weekStart: string; effectiveWeekStart?: string; scope?: 'weekly' | 'activity'; activityId?: string; activityTitle?: string; activityKind?: string; answers: [string, string, string]; aiDraft?: Record<string, unknown>; aiSummary?: string }
+  | { type: 'SAVE_REFLECTION'; reflectionKey?: string; courseId: string; weekStart: string; effectiveWeekStart?: string; scope?: 'weekly' | 'activity'; activityId?: string; activityTitle?: string; activityKind?: string; answers: [string, string, string]; activityFeedback?: Reflection['activityFeedback']; aiDraft?: Record<string, unknown>; aiSummary?: string }
   | { type: 'SET_RECOVERY_OPTIONS'; options: RecoveryOption[]; key: string | null }
   | { type: 'SAVE_AVAILABILITY'; availability: AvailabilityDay[]; unavailable: UnavailableSlot[]; draftBlocks?: TimeBlock[] }
   | { type: 'UPDATE_ROUTINE_PROFILE'; profile: RoutineProfile; draftBlocks?: TimeBlock[] }
@@ -230,12 +231,14 @@ export type Action =
   | { type: 'SET_REVIEW_STATUS'; id: string; status: ReviewStatus; note?: string }
   | { type: 'SET_ASSESSMENT_STATUS'; id: string; status: AssessmentStatus; note?: string }
   | { type: 'ADD_ASSESSMENT_DRAFT'; item: AssessmentItem }
-  | { type: 'UPDATE_ASSESSMENT'; item: Pick<AssessmentItem, 'id' | 'question' | 'rubric' | 'level' | 'source' | 'version'> & Partial<Pick<AssessmentItem, 'answerType' | 'knowledgeComponentIds' | 'assessmentStage' | 'questionDesign' | 'hints' | 'kcProvisional'>>; status?: AssessmentStatus; note?: string; historyText: string }
+  | { type: 'DELETE_ASSESSMENT'; id: string }
+  | { type: 'UPDATE_ASSESSMENT'; item: AssessmentItem; status?: AssessmentStatus; note?: string; historyText: string }
   | { type: 'DISMISS_DRIFT'; taskId: string }
   | { type: 'DISMISS_PLAN_IMPACT'; impactId: string }
   | { type: 'APPLY_PLAN_IMPACT'; impactId: string }
   | { type: 'SYNC_CANVAS'; tasks: Task[]; courses?: Course[]; guidance?: ClassGuidance[]; assessments?: AssessmentItem[]; courseData?: Record<string, LMSCourseData>; reviewResolutions?: CanvasSyncResult['reviewResolutions'] }
   | { type: 'LMS_EVENT_RECEIVED' }
+  | { type: 'MARK_PLAN_NEEDS_ANALYSIS' }
   | { type: 'UPDATE_REMINDER_PREFERENCES'; patch: Partial<ReminderState['preferences']> }
   | { type: 'MARK_REMINDERS_READ'; ids: string[] }
   | { type: 'RECORD_REMINDER_DELIVERY'; ids: string[]; deliveredAt: string }
@@ -534,7 +537,13 @@ export function reducer(state: AppState, action: Action): AppState {
           }
         : null;
       const provisionalBlocks = reconcileLegacyBlockTitles(state.provisionalBlocks, incomingTasks);
-      const hasComparableSnapshot = comparisonTasks.length > 0 || Object.keys(comparisonCourseData).length > 0;
+      // An explicitly saved empty LMS baseline is still a valid snapshot. This
+      // matters when a teacher adds the learner's very first course: comparing
+      // only collection lengths would mistake that change for initial hydration
+      // and silently skip the course-added Plan impact.
+      const hasComparableSnapshot = Boolean(state.lmsBaseline?.syncedAt)
+        || comparisonTasks.length > 0
+        || Object.keys(comparisonCourseData).length > 0;
       const detectedImpacts = hasComparableSnapshot
         ? detectLmsPlanImpacts(
             currentPlan,
@@ -611,18 +620,51 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'LMS_EVENT_RECEIVED':
       return { ...state, lmsRevision: state.lmsRevision + 1 };
+    case 'MARK_PLAN_NEEDS_ANALYSIS': {
+      const blocks = state.calendarDraft?.blocks ?? state.planDraft?.blocks ?? state.plan?.blocks;
+      return {
+        ...state,
+        calendarDraft: blocks?.length
+          ? { blocks, needsAnalysis: true, updatedAt: new Date().toISOString() }
+          : state.calendarDraft,
+      };
+    }
     case 'COURSE_SOURCE_FAILED':
       return { ...state, courseSourceStatus: 'error', settings: { ...state.settings, staleData: true } };
-    case 'UPDATE_STUDY_PREFERENCES':
-      return { ...state, studyPreferences: normalizeStudyPreferences({ ...state.studyPreferences, ...action.patch }) };
-    case 'UPSERT_ACTIVITY_RHYTHM':
-      return { ...state, studyPreferences: normalizeStudyPreferences({ ...state.studyPreferences,
-        activityRhythms: [...(state.studyPreferences.activityRhythms ?? []).filter((item) =>
-          item.courseId !== action.rhythm.courseId || item.activityType !== action.rhythm.activityType), action.rhythm] }) };
-    case 'REMOVE_ACTIVITY_RHYTHM':
-      return { ...state, studyPreferences: normalizeStudyPreferences({ ...state.studyPreferences,
-        activityRhythms: (state.studyPreferences.activityRhythms ?? []).filter((item) =>
-          item.courseId !== action.courseId || item.activityType !== action.activityType) }) };
+    case 'UPDATE_STUDY_PREFERENCES': {
+      const blocks = state.calendarDraft?.blocks ?? state.planDraft?.blocks ?? state.plan?.blocks;
+      return {
+        ...state,
+        studyPreferences: normalizeStudyPreferences({ ...state.studyPreferences, ...action.patch }),
+        calendarDraft: blocks?.length
+          ? { blocks, needsAnalysis: true, updatedAt: new Date().toISOString() }
+          : state.calendarDraft,
+      };
+    }
+    case 'UPSERT_ACTIVITY_RHYTHM': {
+      const blocks = state.calendarDraft?.blocks ?? state.planDraft?.blocks ?? state.plan?.blocks;
+      return {
+        ...state,
+        studyPreferences: normalizeStudyPreferences({ ...state.studyPreferences,
+          activityRhythms: [...(state.studyPreferences.activityRhythms ?? []).filter((item) =>
+            item.courseId !== action.rhythm.courseId || item.activityType !== action.rhythm.activityType), action.rhythm] }),
+        calendarDraft: blocks?.length
+          ? { blocks, needsAnalysis: true, updatedAt: new Date().toISOString() }
+          : state.calendarDraft,
+      };
+    }
+    case 'REMOVE_ACTIVITY_RHYTHM': {
+      const blocks = state.calendarDraft?.blocks ?? state.planDraft?.blocks ?? state.plan?.blocks;
+      return {
+        ...state,
+        studyPreferences: normalizeStudyPreferences({ ...state.studyPreferences,
+          activityRhythms: (state.studyPreferences.activityRhythms ?? []).filter((item) =>
+            item.courseId !== action.courseId || item.activityType !== action.activityType) }),
+        calendarDraft: blocks?.length
+          ? { blocks, needsAnalysis: true, updatedAt: new Date().toISOString() }
+          : state.calendarDraft,
+      };
+    }
     case 'UPDATE_REMINDER_PREFERENCES':
       return {
         ...state,
@@ -670,6 +712,24 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, planDraft: action.draft, calendarDraft: null };
     case 'SAVE_CALENDAR_DRAFT':
       return { ...state, calendarDraft: { blocks: action.blocks, needsAnalysis: true, updatedAt: new Date().toISOString() } };
+    case 'CONFIRM_MANUAL_BLOCK_TIME': {
+      if (!state.plan?.blocks.some((block) => block.id === action.block.id)) return state;
+      const updatedAt = new Date().toISOString();
+      const plan: Plan = {
+        ...state.plan,
+        blocks: state.plan.blocks.map((block) => block.id === action.block.id ? action.block : block),
+        savedAt: updatedAt,
+        version: state.plan.version + 1,
+      };
+      const draftSource = state.calendarDraft?.blocks ?? plan.blocks;
+      const draftBlocks = draftSource.map((block) => block.id === action.block.id ? action.block : block);
+      return withFreshPilotMetrics({
+        ...state,
+        plan,
+        planHistory: [state.plan, ...state.planHistory],
+        calendarDraft: { blocks: draftBlocks, needsAnalysis: true, updatedAt },
+      });
+    }
     case 'UPDATE_DRAFT_BLOCK':
       if (!state.planDraft) return state;
       return {
@@ -724,7 +784,16 @@ export function reducer(state: AppState, action: Action): AppState {
       const tasks = state.tasks.map((task) => task.id === action.session.taskId
         ? { ...task, loggedMin: task.loggedMin + action.session.minutes, status: task.status === 'done' ? 'done' as const : 'in_progress' as const }
         : task);
-      return withFreshPilotMetrics({ ...state, activeSession: null, sessions: [action.session, ...state.sessions], ...withTaskProgress(state, tasks) });
+      const blocks = state.calendarDraft?.blocks ?? state.planDraft?.blocks ?? state.plan?.blocks;
+      return withFreshPilotMetrics({
+        ...state,
+        activeSession: null,
+        sessions: [action.session, ...state.sessions],
+        calendarDraft: blocks?.length
+          ? { blocks, needsAnalysis: true, updatedAt: new Date().toISOString() }
+          : state.calendarDraft,
+        ...withTaskProgress(state, tasks),
+      });
     }
     case 'PAUSE_SESSION': {
       const s = state.activeSession;
@@ -762,10 +831,14 @@ export function reducer(state: AppState, action: Action): AppState {
           ? { ...task, loggedMin: task.loggedMin + action.minutes, status: task.status === 'done' ? 'done' as const : 'in_progress' as const }
           : task,
       );
+      const blocks = state.calendarDraft?.blocks ?? state.planDraft?.blocks ?? state.plan?.blocks;
       return withFreshPilotMetrics({
         ...state,
         activeSession: null,
         sessions: [session, ...state.sessions],
+        calendarDraft: blocks?.length
+          ? { blocks, needsAnalysis: true, updatedAt: new Date().toISOString() }
+          : state.calendarDraft,
         ...withTaskProgress(state, tasks),
       });
     }
@@ -1016,6 +1089,7 @@ export function reducer(state: AppState, action: Action): AppState {
             activityTitle: action.activityTitle,
             activityKind: action.activityKind,
             answers: action.answers,
+            activityFeedback: action.activityFeedback,
             savedAt: new Date().toISOString(),
             aiDraft: action.aiDraft,
             aiSummary: action.aiSummary,
@@ -1106,6 +1180,14 @@ export function reducer(state: AppState, action: Action): AppState {
         assessments: [action.item, ...state.assessments],
         audit: audit(state, `Tạo bản nháp câu kiểm tra “${action.item.topic}”`),
       };
+    case 'DELETE_ASSESSMENT': {
+      const item = state.assessments.find((assessment) => assessment.id === action.id);
+      return {
+        ...state,
+        assessments: state.assessments.filter((assessment) => assessment.id !== action.id),
+        audit: audit(state, `Xóa khỏi ngân hàng câu kiểm tra “${item?.topic ?? action.id}”`),
+      };
+    }
     case 'UPDATE_ASSESSMENT': {
       const d = new Date();
       const at = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -1222,14 +1304,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     let active = true;
     let refreshInFlight = false;
     let refreshQueued = false;
-    let lastRefreshAt = 0;
     const refresh = async () => {
       if (refreshInFlight) {
         refreshQueued = true;
         return;
       }
       refreshInFlight = true;
-      lastRefreshAt = Date.now();
       try {
         const result = await syncCanvas();
         const user = await getCurrentSession();
@@ -1266,25 +1346,12 @@ export function AppStoreProvider({ children }: { children: React.ReactNode }) {
     };
     stream?.addEventListener('lms.changed', handleLmsChange);
 
-    const refreshWhenVisible = () => {
-      if (
-        document.visibilityState === 'visible'
-        && Date.now() - lastRefreshAt >= 30_000
-      ) void refresh();
-    };
-    document.addEventListener('visibilitychange', refreshWhenVisible);
-    window.addEventListener('online', refreshWhenVisible);
     window.addEventListener('pacewise:membership-change', handleLmsChange);
-    // Safety net only. Normal updates arrive through the event stream.
-    const fallbackTimer = window.setInterval(() => void refresh(), 5 * 60_000);
     return () => {
       active = false;
       stream?.removeEventListener('lms.changed', handleLmsChange);
       stream?.close();
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
-      window.removeEventListener('online', refreshWhenVisible);
       window.removeEventListener('pacewise:membership-change', handleLmsChange);
-      window.clearInterval(fallbackTimer);
     };
   }, [state.user?.id, state.workspaceReady]);
   useEffect(() => {

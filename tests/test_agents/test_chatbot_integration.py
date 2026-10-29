@@ -177,6 +177,20 @@ def test_followup_retrieval_uses_previous_question_not_assistant_as_evidence():
     assert "KHÔNG ĐÁNG TIN" in prompt and "không phải nguồn bằng chứng" in prompt
 
 
+def test_sql_acronym_definition_expands_retrieval_without_answering_from_memory():
+    expanded = retrieval_query("SQL viết tắt là gì?")
+
+    assert expanded.startswith("SQL viết tắt là gì?")
+    assert "Structured Query Language" in expanded
+    assert "ngôn ngữ truy vấn có cấu trúc" in expanded
+
+
+def test_non_definition_sql_query_is_not_rewritten():
+    query = "Viết câu SQL tìm sinh viên có điểm cao nhất"
+
+    assert retrieval_query(query) == query
+
+
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -196,6 +210,33 @@ def test_history_schema_does_not_accept_system_roles_or_unbounded_context():
         ChatRequest(message="x", qa_history=[{"role": "user", "content": "x"}] * 5)
     with pytest.raises(ValueError):
         ChatRequest(message="x", qa_history=[{"role": "user", "content": "x" * 1001}])
+
+
+def test_chat_locale_is_validated_and_defaults_to_vietnamese():
+    assert ChatRequest(message="x").locale == "vi"
+    assert ChatRequest(message="x", locale="en").locale == "en"
+    with pytest.raises(ValueError):
+        ChatRequest(message="x", locale="fr")
+
+
+def test_english_locale_controls_model_and_deterministic_replies(evidence, monkeypatch):
+    captured = []
+
+    def invoke(messages):
+        captured.extend(messages)
+        return SimpleNamespace(content="An equivalence relation is reflexive, symmetric, and transitive. [S1]")
+
+    monkeypatch.setattr(
+        "src.agents.workflows.qa.get_agent_llm",
+        lambda **_kwargs: SimpleNamespace(invoke=invoke),
+    )
+    state = {"course_code": "DS201", "request": {"locale": "en"}}
+    answer = qa_node({**state, "query": "Quan hệ tương đương là gì?"})
+    greeting = qa_node({**state, "query": "Hello!"})
+
+    assert "Respond entirely in English" in captured[0].content
+    assert answer["response"].startswith("An equivalence relation")
+    assert greeting["response"].startswith("Hello!")
 
 
 def test_poisoned_fallback_resource_is_not_a_backdoor(monkeypatch):

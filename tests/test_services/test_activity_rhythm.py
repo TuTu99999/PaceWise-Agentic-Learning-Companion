@@ -44,6 +44,12 @@ def test_scope_defaults_metadata_and_validation():
         StudyPreferences.model_validate({**prefs(), "activityRhythms": [{**prefs()["activityRhythms"][0], "activityType": "unknown"}]})
 
 
+def test_nonpositive_course_scope_is_treated_as_unknown():
+    context = activity_context({"title": "Đọc slide"}, {"course_id": 0}, "0:a")
+    assert context["courseId"] is None
+    assert context["activityType"] == "concept"
+
+
 def test_three_similar_fatigued_half_sessions_can_propose_but_not_one():
     rows = [sample(i, actual_minutes=30, interruption_reason="fatigue", completion_percent=50) for i in range(3)]
     assert propose_rhythm(rows[:1], prefs())["proposal"] is None

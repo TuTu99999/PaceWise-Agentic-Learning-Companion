@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -7,6 +9,9 @@ from src.db import SessionLocal
 from src.persistence_models import KnowledgeStateSnapshot, LearningEvent, LearningEvidenceRecord
 from src.security import SessionContext
 from src.services.learning_evidence import build_evidence_contract, persist_learning_evidence
+from src.services.plan_intelligence import mastery_for_component
+from src.services.planning import build_plan_draft
+from src.services.replan_policy import decide_replan
 
 
 def _session() -> SessionContext:
@@ -214,6 +219,104 @@ def test_missing_evidence_is_explicitly_insufficient_and_cannot_update_state():
     assert contract["status"] == "insufficient_evidence"
     assert contract["demonstrated_level"] == "no_evidence"
     assert contract["can_update_knowledge"] is False
+
+
+def test_failed_rubric_metrics_become_bounded_plan_inputs():
+    result = _result(event_key="attempt-planning-metrics")
+    result["assessment_result"].update(
+        {
+            "status": "đang hình thành",
+            "dimensions": {
+                "recall": "passed",
+                "conceptual": "passed",
+                "reasoning": "passed",
+                "application": "failed",
+                "transfer": "not_tested",
+                "retention": "not_tested",
+            },
+            "criterion_scores": [
+                {"criterion_id": "c1", "score": 4, "evidence_quote": "quan hệ phản xạ"},
+                {"criterion_id": "c2", "score": 2, "evidence_quote": "mọi cặp (x, x)"},
+            ],
+        }
+    )
+    contract = build_evidence_contract(
+        session=_session(),
+        settings=get_settings(),
+        result=result,
+        assessment_id="Q-plan-signal",
+        trusted_assessment=_trusted(),
+    )
+
+    assert contract["planning_metrics"] == {
+        "outcome": "developing",
+        "confidence": "high",
+        "tested_dimensions": ["application", "conceptual", "reasoning", "recall"],
+        "passed_dimensions": ["conceptual", "reasoning", "recall"],
+        "failed_dimensions": ["application"],
+        "criterion_count": 2,
+        "passed_criterion_count": 1,
+        "failed_criterion_count": 1,
+        "first_attempt": True,
+        "hint_level": 0,
+        "support_condition": "without_in_app_hint",
+        "review_status": "accepted",
+        "usable_for_planning": True,
+    }
+    decision = decide_replan(signal={}, last_do={}, latest_evidence=contract)
+    assert decision["action"] == "propose_draft"
+    assert decision["auto_apply"] is False
+    assert decision["repair_context"]["failed_dimensions"] == ["application"]
+    assert decision["repair_context"]["affected_knowledge_component_ids"] == ["kc-binary-relation"]
+
+
+@pytest.mark.parametrize("failed_dimension", ["recall", "transfer"])
+def test_every_failed_adaptive_dimension_can_raise_plan_risk(failed_dimension):
+    evidence = {
+        "id": f"evidence-{failed_dimension}",
+        "valid": True,
+        "confidence": "high",
+        "review_status": "accepted",
+        "provisional": False,
+        "can_record_observation": True,
+        "dimensions": {failed_dimension: "failed"},
+        "knowledge_component_ids": ["kc-binary-relation"],
+        "support_condition": "without_in_app_hint",
+    }
+
+    decision = decide_replan(signal={}, last_do={}, latest_evidence=evidence)
+    assert decision["action"] == "propose_draft"
+    assert decision["reasons"] == ["knowledge_gap_observed"]
+    assert decision["repair_context"]["failed_dimensions"] == [failed_dimension]
+
+    snapshot = {
+        "level": "transfer",
+        "unresolved_dimensions": [failed_dimension],
+        "source_evidence_ids": [evidence["id"]],
+    }
+    assert mastery_for_component({"kc-binary-relation": snapshot}, "kc-binary-relation") == 0.25
+    draft = build_plan_draft(
+        {
+            "tasks": [{"taskId": "task-1", "remainingMin": 60}],
+            "availability": [
+                {"weekday": day, "enabled": True, "start": "08:00", "end": "20:00"}
+                for day in range(7)
+            ],
+            "unavailable": [],
+        },
+        [
+            {
+                "id": "task-1",
+                "title": "Grounded assessment follow-up",
+                "deadline": "2026-10-18T23:59:00+07:00",
+                "knowledge_components": ["kc-binary-relation"],
+            }
+        ],
+        mastery_profile={"kc-binary-relation": snapshot},
+        today=date(2026, 10, 12),
+    )
+    assert draft["planningTargets"][0]["adaptiveReviewMin"] == 30
+    assert draft["durationAdjustments"][0]["reviewAddedMin"] == 30
 
 
 def test_same_retry_key_cannot_replay_another_response():

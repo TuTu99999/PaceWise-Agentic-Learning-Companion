@@ -129,6 +129,36 @@ def test_image_request_uses_configured_weight(db):
     assert rejected.value.detail["limit_type"] == "burst"
 
 
+def test_daily_token_quota_can_be_disabled_without_disabling_burst_limit(db):
+    settings = _settings(ai_daily_token_limit_per_user=0, ai_burst_requests=2)
+    identity = SimpleNamespace(user_id=12)
+    now = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
+    for _ in range(2):
+        reservation = reserve_ai_request(
+            db,
+            _request(),
+            identity,
+            settings,
+            workflow="qa",
+            payload_context={},
+            now=now,
+        )
+        finalize_ai_request(db, reservation, ModelUsage(missing_usage=True), settings, succeeded=True)
+
+    assert db.scalar(select(AiUsageBucket).where(AiUsageBucket.limit_type == "daily_tokens")) is None
+    with pytest.raises(HTTPException) as rejected:
+        reserve_ai_request(
+            db,
+            _request(),
+            identity,
+            settings,
+            workflow="qa",
+            payload_context={},
+            now=now,
+        )
+    assert rejected.value.detail["limit_type"] == "burst"
+
+
 def test_finalize_retry_does_not_release_twice(db):
     settings = _settings()
     reservation = reserve_ai_request(

@@ -122,6 +122,25 @@ def test_independent_gate_detects_intraday_deadline_violation():
     assert "AFTER_DEADLINE" in {e["code"] for e in q["blockingErrors"]}
 
 
+def test_independent_gate_rejects_block_moved_before_prerequisite_lesson_end():
+    q = evaluate_plan_quality(
+        {
+            "scheduleStart": "2026-10-08",
+            "blocks": [{"id": "too-early", "taskId": "a1", "date": "2026-10-08", "start": "15:00", "end": "16:00"}],
+            "milestones": [],
+            "feasibility": {"feasible": True, "robustFeasible": True},
+        },
+        [{
+            "id": "a1",
+            "deadline": "2026-10-08T22:00:00+07:00",
+            "learning_available_at": "2026-10-08T16:30:00+07:00",
+        }],
+        now=NOW,
+    )
+    assert not q["canConfirm"]
+    assert "BEFORE_PREREQUISITE" in {e["code"] for e in q["blockingErrors"]}
+
+
 def test_independent_gate_requires_dependency_completion_not_just_start():
     blocks = [
         {"taskId": "a1", "milestoneId": "M1", "date": "2026-10-08", "start": "10:00", "end": "10:30"},

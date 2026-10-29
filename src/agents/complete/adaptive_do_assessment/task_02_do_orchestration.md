@@ -13,4 +13,3 @@
 - Workflow/API integration tests xác minh approved server contract và persistence.
 - Retry event được kiểm tra idempotent; cumulative snapshot giữ toàn bộ evidence IDs.
 - Full backend: `303 passed`; Ruff pass.
-

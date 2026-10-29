@@ -58,15 +58,18 @@ def admission(concurrent, waiting, timeout):
 
 
 def model_tier(task: str, complexity: str = "simple") -> str:
-    # Student-facing tutoring and formative assessment stay on the low-latency
-    # model even for long prompts. Reflection may change future planning, so it
-    # remains on the stronger reasoning tier. Other existing planning tasks
-    # keep their previous reasoning admission policy.
-    if task in {"qa", "assessment", "understanding", "question_design"}:
+    # Student-facing tutoring, bounded plan decomposition and formative
+    # assessment stay on the low-latency model. Reflect is routed explicitly:
+    # activity and low-evidence weeks use Luna, while evidence-rich or
+    # contradictory weeks use Sol.  In both cases deterministic services keep
+    # authority over minutes, factors, mastery and calendar changes.
+    if task == "reflect":
+        return "reasoning" if complexity == "complex" else "fast"
+    if task in {"qa", "plan", "assessment", "understanding", "question_design"}:
         return "fast"
     return (
         "reasoning"
-        if task in {"plan", "reflect", "recover"} or complexity == "complex"
+        if task == "recover" or complexity == "complex"
         else "fast"
     )
 
@@ -80,8 +83,9 @@ class ControlledModel:
     def __init__(self, model, settings, *, task, tier, model_name, cache_scope=None):
         self.model, self.settings = model, settings
         self.task, self.tier, self.model_name = task, tier, model_name
-        # Assessment and decisions are intentionally never cached.
-        self.cache_scope = cache_scope if task == "qa" else None
+        # Exact QA and plan decomposition responses may be reused briefly.
+        # Assessment, reflection and decisions are intentionally never cached.
+        self.cache_scope = cache_scope if task in {"qa", "plan"} else None
         self.gate = admission(settings.llm_max_concurrent, settings.llm_max_waiting, settings.llm_queue_timeout_seconds)
 
     def _key(self, messages):

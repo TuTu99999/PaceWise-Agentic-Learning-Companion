@@ -2,7 +2,7 @@
 
 > Hoàn thành nền tảng checkpoint v1, không phải toàn bộ Adaptive Assessment/Phase 2.
 > Các con số bên dưới là kết quả lịch sử ngày 2026-10-07, không chứng minh chấm hiểu bài với sinh viên thật.
-> Phần bổ sung và kết quả hiện tại: [adaptive validation](../../../../docs/adaptive-assessment-validation.md).
+> Phần bổ sung và kết quả hiện tại: [evaluation evidence](../../../../docs/evaluation-evidence.md).
 
 ## Đầu ra
 
@@ -17,4 +17,3 @@
 - Full backend: `303 passed`; Ruff pass.
 - Eval `2026-10-07.v3`: 140 assessment cases, mọi release threshold pass.
 - Giới hạn được công bố: offline fixtures chưa thay thế SME labels hoặc pilot sinh viên thật.
-

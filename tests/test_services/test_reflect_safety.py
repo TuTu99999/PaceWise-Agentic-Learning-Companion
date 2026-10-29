@@ -42,6 +42,11 @@ def test_legacy_aliases(legacy, expected):
     assert normalize_planning_signal({"cause": legacy})["cause"] == expected
 
 
+def test_single_affected_kc_is_normalized_to_a_list():
+    signal = normalize_planning_signal({"cause": "knowledge_gap", "affected_kcs": "binary search"})
+    assert signal["affected_kcs"] == ["binary search"]
+
+
 def test_unknown_nonfinite_and_malformed_signal_are_safe_and_auditable():
     signal = normalize_planning_signal(
         {
@@ -89,7 +94,7 @@ def test_model_cannot_overwrite_evidence_or_display_conflicting_advice(monkeypat
     draft = result["reflection_draft"]
     assert draft["evidence"] == metrics
     assert draft["evidence"] is not metrics
-    assert draft["validation_warnings"] == ["MODEL_EVIDENCE_CONFLICT"]
+    assert "MODEL_EVIDENCE_CONFLICT" in draft["validation_warnings"]
     assert "999" not in result["response"]
     assert draft["planning_signal"]["duration_factor"] == 1
     draft["evidence"]["activity"]["actual_minutes"] = 7

@@ -191,6 +191,7 @@ function addStudyBlockReminders(
 }
 
 function eventRule(kind: string): { leadMinutes: number; reminderKind: Reminder['kind']; urgency: Reminder['urgency']; label: string }[] {
+  if (kind.startsWith('teaching_')) return [{ leadMinutes: 10, reminderKind: 'online_class', urgency: 'normal', label: 'Buổi học' }];
   if (kind === 'class') return [{ leadMinutes: 10, reminderKind: 'online_class', urgency: 'normal', label: 'Buổi học tại lớp' }];
   if (kind === 'class_session') return [{ leadMinutes: 10, reminderKind: 'online_class', urgency: 'normal', label: 'Buổi học online' }];
   if (kind === 'quiz') return [{ leadMinutes: 30, reminderKind: 'quiz', urgency: 'urgent', label: 'Quiz' }];
@@ -228,7 +229,16 @@ function addLmsEventReminders(result: Reminder[], courseData: Record<string, LMS
 
 function addPlanImpactReminders(result: Reminder[], impacts: PlanImpact[]): void {
   impacts
-    .filter((impact) => ['schedule_conflict', 'deadline_earlier', 'assignment_added'].includes(impact.kind))
+    .filter((impact) => [
+      'course_added',
+      'schedule_conflict',
+      'schedule_changed',
+      'capacity_released',
+      'deadline_earlier',
+      'deadline_later',
+      'assignment_removed',
+      'assignment_added',
+    ].includes(impact.kind))
     .forEach((impact) => {
       const detectedAt = new Date(impact.detectedAt);
       result.push(reminder({

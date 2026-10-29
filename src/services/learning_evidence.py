@@ -152,18 +152,46 @@ def build_evidence_contract(
     if not valid:
         status = "insufficient_evidence"
         level = "no_evidence"
+    review_status = (result.get("assessment_review") or {}).get(
+        "status", "pending_review" if result.get("status") == "awaiting_teacher" else "accepted"
+    )
     can_update_knowledge = bool(
         valid
         and not provisional
         and confidence in {"medium", "high"}
         and result.get("status") != "awaiting_teacher"
+        and review_status == "accepted"
         and level != "no_evidence"
     )
     can_record_observation = bool(
         valid and not provisional and confidence in {"medium", "high"}
         and result.get("status") != "awaiting_teacher"
+        and review_status == "accepted"
         and any(value in {"passed", "failed"} for value in dimensions.values())
     )
+    criterion_scores = [item for item in assessment.get("criterion_scores") or [] if isinstance(item, dict)]
+    scored_criteria = [
+        item
+        for item in criterion_scores
+        if type(item.get("score")) is int and 0 <= item["score"] <= 4
+    ]
+    passed_criteria = sum(1 for item in scored_criteria if item["score"] >= 3)
+    failed_criteria = sum(1 for item in scored_criteria if item["score"] < 3)
+    planning_metrics = {
+        "outcome": status,
+        "confidence": confidence,
+        "tested_dimensions": sorted(key for key, value in dimensions.items() if value != "not_tested"),
+        "passed_dimensions": sorted(key for key, value in dimensions.items() if value == "passed"),
+        "failed_dimensions": sorted(key for key, value in dimensions.items() if value == "failed"),
+        "criterion_count": len(scored_criteria),
+        "passed_criterion_count": passed_criteria,
+        "failed_criterion_count": failed_criteria,
+        "first_attempt": first_attempt,
+        "hint_level": hint_level,
+        "support_condition": "with_in_app_hint" if hint_level else "without_in_app_hint",
+        "review_status": review_status,
+        "usable_for_planning": bool(can_update_knowledge or can_record_observation),
+    }
     return {
         "id": f"LE-{uuid.uuid4().hex[:20]}",
         "event_key": event_key,
@@ -188,13 +216,14 @@ def build_evidence_contract(
         "confidence": confidence,
         "demonstrated_level": level,
         "dimensions": dimensions,
-        "criterion_scores": assessment.get("criterion_scores") or [],
+        "criterion_scores": criterion_scores,
+        "planning_metrics": planning_metrics,
         "support_condition": "with_in_app_hint" if hint_level else "without_in_app_hint",
         "misconceptions": assessment.get("misconceptions") or [],
         "evidence_quotes": evidence_quotes,
         "source_ref_ids": [str(item.get("id") or item.get("citation") or "") for item in result.get("source_refs") or [] if item],
         "valid": valid,
-        "review_status": (result.get("assessment_review") or {}).get("status", "pending_review" if result.get("status") == "awaiting_teacher" else "accepted"),
+        "review_status": review_status,
         "can_update_knowledge": can_update_knowledge,
         "can_record_observation": can_record_observation,
         "retention_status": "passed" if level == "retained" else "not_tested",

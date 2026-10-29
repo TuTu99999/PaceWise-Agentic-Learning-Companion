@@ -46,6 +46,62 @@ def test_utc_deadline_display_keeps_local_date_and_exact_timestamp():
     assert task["deadline"] == "2026-10-09" and task["dueAt"] == "2026-10-08T18:17:00Z"
 
 
+def test_assessment_design_projection_reads_only_the_local_action_log(monkeypatch):
+    def must_not_create_lms_client(_settings):
+        raise AssertionError("Assessment design must not wait for LMS aggregate APIs")
+
+    monkeypatch.setattr(lms_integration, "_client", must_not_create_lms_client)
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                InstructorAction(
+                    id="fast-design-structure",
+                    course_id=701,
+                    actor_user_id=22,
+                    action_type="course_structure",
+                    entity_id="course-structure",
+                    payload_json=json.dumps(
+                        {
+                            "modules": [{"id": "chapter-2", "title": "Chương 2", "position": 2}],
+                            "knowledgeComponents": [
+                                {
+                                    "id": "db.chapter-2.search",
+                                    "moduleId": "chapter-2",
+                                    "name": "Tìm kiếm nội",
+                                    "status": "approved",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+                InstructorAction(
+                    id="fast-design-question",
+                    course_id=701,
+                    actor_user_id=22,
+                    action_type="assessment",
+                    entity_id="Q-CH2",
+                    payload_json=json.dumps(
+                        {
+                            "topic": "Chương 2",
+                            "question": "Vì sao tìm kiếm nhị phân cần dữ liệu đã sắp xếp?",
+                            "rubric": ["Đúng điều kiện", "Giải thích thu hẹp phạm vi"],
+                            "status": "approved",
+                            "version": 1,
+                            "source": "Buoi02_Ky_thuat_tim_kiem.pdf",
+                            "knowledgeComponentIds": ["db.chapter-2.search"],
+                        }
+                    ),
+                ),
+            ]
+        )
+        db.commit()
+        result = lms_integration.instructor_assessment_designs(_session(role="instructor"), db)
+
+    assert [item["id"] for item in result["assessments"]] == ["Q-CH2"]
+    assert result["teacherWorkspace"]["courseStructure"]["modules"][0]["id"] == "chapter-2"
+    assert result["classGroups"] == []
+
+
 def test_claim_validation_and_task_edge_cases():
     lms_integration._validate_claims(
         {
@@ -174,7 +230,14 @@ async def test_student_sync_builds_multicourse_payload_and_review_resolutions(mo
                     action_type="assessment",
                     entity_id="Q-501",
                     payload_json=json.dumps(
-                        {"status": "approved", "version": 2, "rubric": ["Reasoning"]}
+                            {
+                                "status": "approved",
+                                "version": 2,
+                                "topic": "Relations",
+                                "question": "Why is the relation transitive?",
+                                "source": "relations.pdf · page 3",
+                                "rubric": ["Reasoning"],
+                            }
                     ),
                 ),
                 InstructorAction(
@@ -187,6 +250,9 @@ async def test_student_sync_builds_multicourse_payload_and_review_resolutions(mo
                         {
                             "status": "approved",
                             "version": 1,
+                                "topic": "Data application",
+                                "question": "Apply the data model to this example.",
+                                "source": "data-model.pdf · page 5",
                             "rubric": ["Application"],
                             "knowledgeComponentIds": ["data.apply"],
                         }
@@ -263,6 +329,7 @@ async def test_student_sync_builds_multicourse_payload_and_review_resolutions(mo
     )
     assert teacher_event["duration_minutes"] == 90
     assert teacher_event["editable"] is False
+    assert not any(path.endswith("/quizzes") for path, _params in calls)
     assert any(path.endswith("/files") and params == {"user_id": 12} for path, params in calls)
 
 
@@ -440,6 +507,64 @@ def _overview_service(student_count: int):
 
 
 @pytest.mark.asyncio
+async def test_instructor_dashboard_only_uses_the_selected_owned_course(monkeypatch):
+    now_past = "2020-10-01T00:00:00Z"
+    students = [
+        *[{"user_id": index, "name": f"Student {index}", "role": "student"} for index in range(1, 11)],
+        {"user_id": 22, "name": "Teacher", "role": "instructor"},
+    ]
+
+    async def service_get(path, params=None):
+        if path == "/api/pacewise/v1/courses":
+            return [
+                {"id": 701, "code": "C701", "name": "Course 701", "term": "HK1", "enrollment_role": "instructor"},
+                {"id": 702, "code": "C702", "name": "Course 702", "term": "HK1", "enrollment_role": "instructor"},
+            ]
+        if path.endswith("/enrollments"):
+            return students
+        if path.endswith("/assignments"):
+            return [
+                {"id": int(path.split("/")[-2]) * 10, "title": "Past task", "due_at": now_past, "published": True}
+            ]
+        if path.endswith("/submissions"):
+            return []
+        if path.startswith("/api/pacewise/v1/teacher/courses/"):
+            return {"lessons": []}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        lms_integration,
+        "_client",
+        lambda _settings: _overview_client(AsyncMock(side_effect=service_get)),
+    )
+    result = await lms_integration.instructor_dashboard(_session(role="instructor"), _settings(), 701)
+
+    assert [item["code"] for item in result["courses"]] == ["C701"]
+    assert result["summary"] == {"highRisk": 0, "openWarnings": 10, "overdue": 10}
+    assert len(result["studentAlerts"]) == 10
+    assert result["studentAlerts"][0]["studentName"] == "Student 1"
+    assert {item["courseId"] for item in result["studentAlerts"]} == {"701"}
+    assert result["summary"]["highRisk"] == sum(
+        item["severity"] == "high" for item in result["studentAlerts"]
+    )
+    assert result["summary"]["openWarnings"] == sum(
+        item["severity"] == "warning" for item in result["studentAlerts"]
+    )
+    assert result["summary"]["overdue"] == sum(
+        item["overdueCount"] > 0 for item in result["studentAlerts"]
+    )
+    assert result["privacy"]["scope"] == "individual"
+    assert result["privacy"]["containsDirectIdentifiers"] is True
+
+
+@pytest.mark.asyncio
+async def test_instructor_dashboard_rejects_a_course_outside_the_teacher_enrollments():
+    with pytest.raises(HTTPException) as denied:
+        await lms_integration.instructor_dashboard(_session(role="instructor"), _settings(), 999)
+    assert denied.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_instructor_overview_suppresses_small_groups(monkeypatch):
     settings = _settings()
     session = _session(role="instructor")
@@ -491,7 +616,16 @@ async def test_instructor_overview_aggregates_anonymous_workflow_data(monkeypatc
                     actor_user_id=22,
                     action_type="assessment",
                     entity_id="Q-1",
-                    payload_json=json.dumps({"status": "approved", "version": 4}),
+                        payload_json=json.dumps(
+                            {
+                                "status": "approved",
+                                "version": 4,
+                                "topic": "Concepts",
+                                "question": "Explain the concept in your own words.",
+                                "source": "chapter-1.pdf · page 2",
+                                "rubric": ["Correct concept", "Grounded explanation"],
+                            }
+                        ),
                 ),
                 InstructorAction(
                     id="coverage-overview-review",
@@ -527,7 +661,7 @@ async def test_instructor_overview_aggregates_anonymous_workflow_data(monkeypatc
     assert result["assessments"][0]["status"] == "approved"
     assert any(item["id"] == "coverage-agent-review" for item in result["reviewQueue"])
     assert result["lmsSummary"] is None
-    assert service_get.await_count == 7  # No duplicate sections/groups/modules/analytics fetches.
+    assert service_get.await_count == 6  # Assessment design no longer fetches quiz modules.
     assert result["privacy"]["containsDirectIdentifiers"] is False
     assert any(
         call.args[0].endswith("/submissions") and call.args[1] == {"summary": True}

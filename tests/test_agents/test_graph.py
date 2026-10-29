@@ -158,9 +158,20 @@ async def test_graph_replaces_resolved_risk_signals(mock_llm):
 @pytest.mark.asyncio
 async def test_graph_replaces_resolved_validation_errors(mock_llm):
     config = {"configurable": {"thread_id": "validation-errors-are-a-snapshot"}}
+    assignments = [
+        {
+            "id": "course:task-1",
+            "title": "Database report",
+            "description": "Write the schema, queries, test evidence, and review before submission.",
+            "deadline": "2026-10-20T20:00:00+07:00",
+            "submission_types": ["online_upload"],
+            "estimated_hours": 2,
+        }
+    ]
     invalid = await agent.ainvoke(
         {
             "query": "Lập kế hoạch tuần",
+            "assignments": assignments,
             "availability": [{"hours": 1}],
             "request": {"workflow_hint": "plan"},
         },
@@ -169,6 +180,7 @@ async def test_graph_replaces_resolved_validation_errors(mock_llm):
     valid = await agent.ainvoke(
         {
             "query": "Lập kế hoạch tuần mới",
+            "assignments": assignments,
             "availability": [{"hours": 10}],
             "request": {"workflow_hint": "plan"},
         },

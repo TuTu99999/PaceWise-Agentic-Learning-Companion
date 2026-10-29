@@ -89,10 +89,11 @@
   .link {
     @apply font-semibold text-primary-ink underline-offset-4 hover:underline;
   }
-  .chat-markdown { @apply leading-relaxed break-words; }
+  .chat-markdown { @apply break-words text-left leading-7; overflow-wrap: break-word; }
   .chat-markdown > :first-child { margin-top: 0; }
   .chat-markdown > :last-child { margin-bottom: 0; }
   .chat-markdown p { @apply my-3; }
+  .chat-markdown p + p { @apply mt-4; }
   .chat-markdown h1, .chat-markdown h2, .chat-markdown h3, .chat-markdown h4 { @apply mb-2 mt-5 font-semibold; }
   .chat-markdown ul { @apply my-3 list-disc space-y-1.5 pl-6; }
   .chat-markdown ol { @apply my-3 list-decimal space-y-1.5 pl-6; }
@@ -152,10 +153,47 @@
 .calendar-toolbar-dates, .calendar-toolbar-actions { grid-column: 1 / -1; }
 .calendar-toolbar-dates input { width: 0; min-width: 0; flex: 1; }
 .calendar-toolbar-actions > button { flex: 1 1 auto; max-width: 100%; white-space: normal; }
-.calendar-toolbar-actions > .teacher-lesson-manager-trigger { flex: 0 0 auto; width: auto; white-space: nowrap; }
 .calendar-toolbar-views button { min-height: 44px; padding-inline: 8px; }
 .calendar-toolbar-dates input, .calendar-toolbar-dates button { min-height: 44px; }
 .calendar-status { max-height: 96px; overflow-y: auto; overflow-wrap: anywhere; }
+.calendar-analysis-pane { min-height: 88px; overscroll-behavior: contain; }
+.calendar-analysis-pane.is-collapsed { min-height: 46px; overflow: hidden; padding-block: 4px; }
+.calendar-analysis-resizer {
+  position: relative;
+  z-index: 20;
+  flex: 0 0 18px;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+  background: rgb(var(--pw-surface));
+  border-block: 1px solid rgb(var(--pw-line));
+}
+.calendar-analysis-resizer::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgb(var(--pw-muted));
+  opacity: .45;
+  transform: translate(-50%, -50%);
+  transition: width .15s ease, opacity .15s ease, background-color .15s ease;
+}
+.calendar-analysis-resizer:hover::before,
+.calendar-analysis-resizer:focus-visible::before,
+.calendar-analysis-resizer.is-resizing::before {
+  width: 76px;
+  opacity: 1;
+  background: rgb(var(--pw-primary-ink));
+}
+.calendar-analysis-resizer.is-resizing { background: rgb(var(--pw-primary-light)); }
+.calendar-analysis-resizer:focus-visible { outline: 2px solid rgb(var(--pw-primary-ink)); outline-offset: -2px; }
+@media (pointer: coarse), (max-width: 639px) {
+  .calendar-analysis-resizer { flex-basis: 24px; }
+  .calendar-analysis-resizer::before { width: 72px; height: 5px; }
+}
 /* Selection/hover layers stay inside the calendar, below toolbar popovers.
    Modals use a body portal and remain independent of this stacking context. */
 .calendar-board-frame { position: relative; isolation: isolate; z-index: 0; }

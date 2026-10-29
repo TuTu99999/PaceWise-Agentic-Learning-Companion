@@ -102,7 +102,10 @@ export function InstructorProfilePage() {
         <Input label={t('Liên hệ / website (HTTPS)')} type="url" pattern="https://.*" maxLength={500} value={profile.details.contact_url} onChange={(event) => change('contact_url', event.target.value)} /></div>
       <Textarea label={t('Giờ tư vấn / cách đặt lịch')} maxLength={500} value={profile.details.office_hours} onChange={(event) => change('office_hours', event.target.value)} />
       <Textarea label={t('Giới thiệu chuyên môn')} maxLength={2000} value={profile.details.bio} onChange={(event) => change('bio', event.target.value)} />
-      <p className="text-sm text-muted">Môn đang phụ trách: {state.courses.map((course) => course.code).join(', ') || 'Đang đồng bộ'}. Hồ sơ này lưu theo tài khoản, không thay đổi khi chuyển môn.</p>
+      <p className="text-sm text-muted">{t(
+        `Môn đang phụ trách: ${state.courses.map((course) => course.code).join(', ') || 'Đang đồng bộ'}. Hồ sơ này lưu theo tài khoản, không thay đổi khi chuyển môn.`,
+        `Courses taught: ${state.courses.map((course) => course.code).join(', ') || 'Syncing'}. This profile belongs to the account and does not change when switching courses.`,
+      )}</p>
       {success && <p role="status" className="text-success-ink">{t('Đã lưu thông tin giảng viên.')}</p>}<Button type="submit" loading={busy}>{t('Lưu thông tin')}</Button>
       </fieldset>
     </form></Card>}

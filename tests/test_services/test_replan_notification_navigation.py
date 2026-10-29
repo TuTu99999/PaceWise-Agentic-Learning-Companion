@@ -27,3 +27,82 @@ def test_push_jobs_use_plan_for_lms_change_missed_block_and_urgent_deadline():
         assert parse_qs(parts.query)["reanalyze"] == [trigger]
         assert parse_qs(parts.query)["taskId"] == ["1:10"]
     assert parse_qs(urlsplit(jobs["lms_change"]["href"]).query)["impactId"] == ["new-task"]
+
+
+def test_teacher_schedule_change_without_conflict_still_requests_plan_reanalysis():
+    now = datetime(2026, 10, 10, 10, tzinfo=LOCAL)
+    jobs = candidates(
+        {
+            "planImpacts": [
+                {
+                    "id": "teacher-schedule-change",
+                    "kind": "schedule_changed",
+                    "detectedAt": "2026-10-10T09:59:00+07:00",
+                }
+            ]
+        },
+        now,
+    )
+    item = next(job for job in jobs if job["kind"] == "lms_change")
+    assert parse_qs(urlsplit(item["href"]).query) == {
+        "reanalyze": ["lms"],
+        "impactId": ["teacher-schedule-change"],
+    }
+
+
+def test_new_course_membership_requests_plan_reanalysis():
+    now = datetime(2026, 10, 10, 10, tzinfo=LOCAL)
+    jobs = candidates(
+        {
+            "planImpacts": [
+                {
+                    "id": "course-added:2",
+                    "kind": "course_added",
+                    "courseId": "2",
+                    "detectedAt": "2026-10-10T09:59:00+07:00",
+                }
+            ]
+        },
+        now,
+    )
+    item = next(job for job in jobs if job["kind"] == "lms_change")
+    assert parse_qs(urlsplit(item["href"]).query) == {
+        "reanalyze": ["lms"],
+        "impactId": ["course-added:2"],
+        "courseId": ["2"],
+    }
+
+
+def test_every_plan_affecting_lms_change_gets_a_push_handoff():
+    now = datetime(2026, 10, 10, 10, tzinfo=LOCAL)
+    kinds = {
+        "course_added",
+        "schedule_conflict",
+        "schedule_changed",
+        "capacity_released",
+        "deadline_earlier",
+        "deadline_later",
+        "assignment_removed",
+        "assignment_added",
+    }
+    jobs = candidates(
+        {
+            "planImpacts": [
+                {
+                    "id": f"impact-{kind}",
+                    "kind": kind,
+                    "taskId": "1:10",
+                    "courseId": "1",
+                    "detectedAt": "2026-10-10T09:59:00+07:00",
+                }
+                for kind in kinds
+            ]
+        },
+        now,
+    )
+    handoffs = [job for job in jobs if job["kind"] == "lms_change"]
+    assert len(handoffs) == len(kinds)
+    assert {
+        parse_qs(urlsplit(job["href"]).query)["impactId"][0]
+        for job in handoffs
+    } == {f"impact-{kind}" for kind in kinds}

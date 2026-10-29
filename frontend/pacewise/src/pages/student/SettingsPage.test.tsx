@@ -1,23 +1,32 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HashRouter, Link, useLocation } from 'react-router-dom';
-import { downloadPlanIcs, exportPlanToGoogleCalendar, getGoogleCalendarStatus } from '../../services/api';
+import { downloadPlanIcs, exportPlanToGoogleCalendar, getGoogleCalendarStatus, getRhythmProposal } from '../../services/api';
 import { SettingsPage } from './SettingsPage';
+import { LocaleProvider } from '../../i18n/LocaleContext';
+import { PACEWISE_LANGUAGE_STORAGE_KEY } from '../../utils/uiPreferences';
 
-const mocks = vi.hoisted(() => ({ dispatch: vi.fn(), toast: vi.fn(), state: {} as Record<string, unknown> }));
+const mocks = vi.hoisted(() => ({
+  dispatch: vi.fn(), toast: vi.fn(), state: {} as Record<string, any>,
+  persistence: { status: 'saved', savedAt: null as string | null, message: null as string | null },
+}));
 vi.mock('../../components/ui/Toast', () => ({ useToast: () => mocks.toast }));
+vi.mock('../../services/courseSource', () => ({ standaloneCourses: true }));
 vi.mock('../../services/api', () => ({
   connectGoogleCalendar: vi.fn(), disconnectGoogleCalendar: vi.fn(), downloadPlanIcs: vi.fn(),
   exportPlanToGoogleCalendar: vi.fn(), getGoogleCalendarStatus: vi.fn(), syncGoogleCalendarBusy: vi.fn(),
+  getRhythmProposal: vi.fn(), confirmRhythmProposal: vi.fn(), syncCanvas: vi.fn(),
 }));
 vi.mock('../../store/AppStore', () => ({ useAppStore: () => ({
   dispatch: mocks.dispatch,
   state: mocks.state,
-  persistence: { status: 'saved', savedAt: null, message: null },
+  persistence: mocks.persistence,
 }) }));
 
 beforeEach(() => {
   vi.resetAllMocks();
+  localStorage.removeItem(PACEWISE_LANGUAGE_STORAGE_KEY);
+  Object.assign(mocks.persistence, { status: 'saved', savedAt: null, message: null });
   Object.keys(mocks.state).forEach((key) => delete mocks.state[key]);
   Object.assign(mocks.state, {
     user: { name: 'Calendar Student', email: 'student@example.edu' },
@@ -48,7 +57,39 @@ function renderSettings() {
   return render(<HashRouter><RouteLocation /><SettingsPage /></HashRouter>);
 }
 
+function renderSettingsEnglish() {
+  localStorage.setItem(PACEWISE_LANGUAGE_STORAGE_KEY, 'en');
+  return render(<LocaleProvider><HashRouter><RouteLocation /><SettingsPage /></HashRouter></LocaleProvider>);
+}
+
 describe('Student Settings', () => {
+  it('renders dynamic data, synchronization, rhythm, and Google statuses fully in English', async () => {
+    mocks.state.workspaceReady = true;
+    mocks.state.settings = { lastSync: '2026-10-18T07:39:37Z', staleData: false };
+    mocks.persistence.savedAt = '2026-10-18T07:39:38Z';
+    vi.mocked(getRhythmProposal).mockResolvedValue({ status: 'insufficient_evidence', proposal: null } as never);
+    vi.mocked(getGoogleCalendarStatus).mockResolvedValue({
+      configured: true, connected: true, accountEmail: 'personal.calendar@gmail.com',
+      lastFreeBusySyncAt: '2026-10-15T04:13:49Z', calendarId: 'primary', connectedAt: '2026-10-09T00:00:00Z',
+    });
+
+    renderSettingsEnglish();
+
+    expect(await screen.findByText('personal.calendar@gmail.com')).toBeInTheDocument();
+    expect(screen.getByText('PaceWise · internal data')).toBeVisible();
+    expect(screen.getByText('Courses, schedules, and learning materials are managed directly in PaceWise; no LMS connection is required.')).toBeVisible();
+    expect(screen.getByText('PaceWise data is up to date')).toBeVisible();
+    expect(screen.getByText(/Last synchronized:/)).toBeVisible();
+    expect(screen.getByText('There is not enough comparable evidence to suggest a different rhythm. Your current choices remain unchanged.')).toBeVisible();
+    expect(screen.getByText(/Last saved:/)).toBeVisible();
+    expect(screen.getByText('personal.calendar@gmail.com').parentElement).toHaveTextContent('Connected to personal.calendar@gmail.com. PaceWise does not edit or delete your other events.');
+    expect(screen.getByText(/Busy times last imported:/)).toBeVisible();
+    expect(screen.getByText('1 study session in the current plan · can be exported as an .ics file independently of Google.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add 1 session to Google' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 session to Google' }));
+    expect(screen.getByRole('button', { name: 'Confirm creating 1 event' })).toBeVisible();
+  });
+
   it('keeps transport errors distinct from missing OAuth configuration and allows retry', async () => {
     vi.mocked(getGoogleCalendarStatus).mockRejectedValueOnce(new Error('Network failed')).mockResolvedValue({
       configured: true, connected: false, accountEmail: null, lastFreeBusySyncAt: null,
@@ -63,12 +104,13 @@ describe('Student Settings', () => {
   it('removes availability/privacy cards without changing saved schedule or account/calendar controls', async () => {
     renderSettings();
     expect(await screen.findByRole('button', { name: 'Kết nối Google Calendar' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Chính sách quyền riêng tư' })).toHaveAttribute('href', '/privacy');
     expect(screen.queryByText('Thời gian rảnh mặc định')).not.toBeInTheDocument();
     expect(screen.queryByText('Quyền riêng tư')).not.toBeInTheDocument();
     expect(screen.queryByText(/Giảng viên chỉ thấy số liệu tổng hợp/)).not.toBeInTheDocument();
     expect(screen.getByText('student@example.edu')).toBeInTheDocument();
     expect(screen.getByText('Đồng bộ dữ liệu PaceWise')).toBeInTheDocument();
-    expect(screen.getByText('1 ca tự học trong kế hoạch hiện tại · không cần kết nối Google.')).toBeInTheDocument();
+    expect(screen.getByText('1 ca tự học trong kế hoạch hiện tại · có thể xuất file .ics độc lập với Google.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Tải file .ics' })).toBeEnabled();
     expect(mocks.dispatch).not.toHaveBeenCalled();
     expect(exportPlanToGoogleCalendar).not.toHaveBeenCalled();
